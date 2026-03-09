@@ -12,13 +12,17 @@ Instead of reviewing a flat list of changed files, `review-changes` uses AI to:
 
 ## Installation
 
-### Option A: Plugin directory
+### Option A: One-time use (per session)
+
+Launch Claude Code with the `--plugin-dir` flag to load the plugin for a single session:
 
 ```bash
 claude --plugin-dir /path/to/review-changes
 ```
 
-### Option B: Plugin install
+### Option B: Permanent install
+
+Install the plugin so it loads automatically whenever you run `claude` in the project:
 
 ```bash
 claude plugin install /path/to/review-changes
@@ -26,14 +30,18 @@ claude plugin install /path/to/review-changes
 
 ## Usage
 
+Once loaded, the plugin registers the `/rc:review` slash command:
+
 ```
-/review-changes                     # All uncommitted changes (staged + unstaged)
-/review-changes staged              # Only staged changes
-/review-changes unstaged            # Only unstaged changes
-/review-changes branch              # Current branch vs main/master
-/review-changes commit abc123       # Changes from a specific commit
-/review-changes main..feature       # Changes between two refs
+/rc:review                     # All uncommitted changes (staged + unstaged)
+/rc:review staged              # Only staged changes
+/rc:review unstaged            # Only unstaged changes
+/rc:review branch              # Current branch vs main/master
+/rc:review commit abc123       # Changes from a specific commit
+/rc:review main..feature       # Changes between two refs
 ```
+
+> **Note:** Plugin skills are namespaced as `/plugin-name:skill-name` to avoid conflicts with other plugins or built-in skills.
 
 ### Workflow
 
@@ -54,7 +62,7 @@ claude plugin install /path/to/review-changes
 
 ## Architecture
 
-- **`commands/review-changes.md`** — The slash command orchestrator. Handles argument parsing, user interaction, and annotated diff display.
+- **`skills/review/SKILL.md`** — The slash command orchestrator. Handles argument parsing, user interaction, and annotated diff display.
 - **`agents/diff-analyzer.md`** — A Sonnet-powered subagent that groups diff hunks by semantic purpose.
 - **`.claude-plugin/plugin.json`** — Plugin manifest for Claude Code discovery.
 

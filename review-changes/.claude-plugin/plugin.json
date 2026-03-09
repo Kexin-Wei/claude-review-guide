@@ -1,7 +1,9 @@
 {
-  "name": "review-changes",
+  "name": "rc",
   "version": "1.0.0",
   "description": "Semantically groups git changes by purpose and provides annotated code review with AI-powered insights",
-  "author": "kk",
+  "author": {
+    "name": "kk"
+  },
   "license": "MIT"
 }
