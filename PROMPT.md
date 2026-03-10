@@ -1,393 +1,517 @@
-# Prompt: Build "review-changes" — A Claude Code Plugin
+# Prompt: Build a Web-Based Semantic Code Review Tool
 
-You are building a Claude Code plugin called `review-changes`. This plugin helps developers review their git changes by grouping them into logical features and presenting annotated diffs for human-guided code review. You will create a complete, working plugin consisting of markdown files and a JSON manifest — no code, no build steps, no npm packages.
+You are building a **web-based code review tool** that semantically groups git diffs by purpose and provides AI-powered annotations. It replaces a CLI plugin that was limited by terminal UX — the web version should be visual, persistent, and easy to navigate.
 
-<context>
-## The gap this plugin fills
+---
 
-There are two approaches to code review in Claude Code today:
+## Background: What This Replaces
 
-1. **Automated AI review** — Plugins like `/code-review` and `/review-pr` have the AI find bugs, style issues, and problems, then report them. The AI is the reviewer.
-2. **Manual diff reading** — The developer reads `git diff` output as a flat list of file changes with no grouping or explanation.
+The existing CLI plugin (`review-changes`) works inside Claude Code. It:
+- Runs `git diff` and sends the output to a Claude subagent
+- The subagent groups changes by **semantic purpose** (bug fix, new feature, refactor, etc.) — not by file path
+- A single file can appear in multiple groups if different hunks serve different purposes
+- The user selects a feature group, then sees annotated diffs with three-part annotations:
+  - **What changed** — factual summary of modifications
+  - **Why it matters** — purpose and impact in context
+  - **Review hint** — what reviewers should watch for
 
-**Neither helps the human understand and review their own changes.** This plugin fills that gap:
+The web app preserves all of this logic but provides a **three-column visual layout** instead of sequential terminal output, and **persists results** in SQLite so analysis isn't repeated.
 
-- It uses AI to **semantically group changes by purpose** (not by file) — a bug fix, a refactoring, and a new feature get separated even if they touch the same files
-- It lets the developer **pick which feature to review** via an interactive menu
-- It shows **annotated diffs** that explain what changed, why it matters, and what to watch for
+---
 
-The result: faster, more focused code reviews — whether self-review before committing, or walking a teammate through your changes.
+## Stack
 
-## Why a plugin, not a standalone CLI tool
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 14+ (App Router) |
+| Language | TypeScript (strict mode) |
+| UI | React, Tailwind CSS |
+| Database | SQLite via Drizzle ORM + `better-sqlite3` |
+| AI | Anthropic SDK (`@anthropic-ai/sdk`) |
+| Syntax Highlighting | Shiki |
+| Package Manager | npm |
 
-This is a **Claude Code plugin**, not a standalone Node.js CLI. Claude Code already provides everything needed:
+Single Next.js project — no separate backend service.
 
-| Need | Claude Code provides | Not needed |
-|------|---------------------|------------|
-| AI analysis | Claude (the model running the plugin) | `@anthropic-ai/sdk` |
-| User interaction | `AskUserQuestion` tool | `inquirer`, `prompts` |
-| Shell commands | `Bash` tool | `child_process` wrappers |
-| Terminal formatting | Markdown rendering | `chalk` |
-| CLI argument parsing | `$ARGUMENTS` substitution | `commander` |
+---
 
-The plugin is pure markdown and JSON. It works immediately after installation with zero dependencies.
-</context>
+## Application Layout
 
-<instructions>
-Build a Claude Code plugin that registers a `/review-changes` slash command. The plugin consists of exactly **5 files** in this structure:
-
-```
-review-changes/
-├── .claude-plugin/plugin.json      # Plugin manifest
-├── commands/review-changes.md      # Slash command (orchestrates the workflow)
-├── agents/diff-analyzer.md         # Subagent (analyzes diffs, groups into features)
-├── README.md                       # Documentation
-└── LICENSE                         # MIT license
-```
-
-Create each file exactly as specified below. Do not add extra files, directories, or abstractions.
-</instructions>
-
-<architecture>
-## How the two components interact
+The app is a **single-page application** with this structure:
 
 ```
-User runs: /review-changes staged
-         │
-         ▼
-┌─────────────────────────────────────────────┐
-│  commands/review-changes.md                 │
-│  (orchestration — runs as the main Claude)  │
-│                                             │
-│  1. Parse $ARGUMENTS → git diff --cached    │
-│  2. Bash: run git diff command              │
-│  3. Agent: spawn diff-analyzer with diff    │◄── returns feature list
-│  4. AskUserQuestion: feature selection      │
-│  5. Show annotated diff for selection       │
-│  6. AskUserQuestion: iterate or finish      │
-└─────────────────────────────────────────────┘
-         │
-         │ step 3 spawns
-         ▼
-┌─────────────────────────────────────────────┐
-│  agents/diff-analyzer.md                    │
-│  (analysis — runs as a subagent)            │
-│                                             │
-│  - Receives: raw git diff                   │
-│  - Groups changes by PURPOSE, not by file   │
-│  - Returns: structured markdown with        │
-│    features, summaries, file+line ranges    │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  [Repo Path: /home/user/project ✓]  [API Key: ••••••]  [⚙]    │  ← Top Bar
+├──────────────────────────────────────────────────────────────────┤
+│  [ Git Changes ]  [ Commit Analysis ]  [ Code Analysis ]        │  ← Tab Bar
+├──────────────────────────────────────────────────────────────────┤
+│  Scope: [All uncommitted ▾]                      [▶ Analyze]    │  ← Scope Bar
+├──────────────┬───────────────────────┬───────────────────────────┤
+│              │  [🔍 Search across diff and annotations...]       │
+│  Feature     ├───────────────────────┬───────────────────────────┤
+│  Groups      │                       │                           │
+│              │   Diff / Source       │   AI Annotations          │
+│  ☐ Fix tz    │   View               │                           │
+│    bug (2)   │                       │   ✦ What changed          │
+│              │   - old line          │   ...                     │
+│  ☐ Add rate  │   + new line          │   ✦ Why it matters        │
+│    limit (3) │                       │   ...                     │
+│              │                       │   ✦ Review hint           │
+│  3/7 done    │                       │   ...                     │
+│              │                       │                           │
+├──────────────┴───────────────────────┴───────────────────────────┤
+│  25% ◂═══════╋═══════════════════╋═══════════════════▸ 35%      │  ← Resizable
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Command: `review-changes` (orchestrator)
-- Runs in the main Claude context with full tool access
-- Handles the user-facing workflow: argument parsing, user interaction, diff display
-- Uses the `Agent` tool to delegate analysis to `diff-analyzer`
-- Uses `AskUserQuestion` for all user interaction (feature selection, iteration)
+---
 
-### Agent: `diff-analyzer` (analyzer)
-- Runs as a subagent with `model: sonnet` (fast, good at code understanding)
-- Has read-only tools: `Bash, Read, Grep, Glob`
-- Single responsibility: receive a diff, return grouped features
-- Groups by **purpose** — a single file may appear in multiple feature groups if it contains changes serving different purposes
-</architecture>
+## Tab Types
 
-<file_specifications>
+### Tab 1: Git Changes
 
-## File 1: `.claude-plugin/plugin.json`
+Analyzes uncommitted changes in a git repository.
 
-Create this exact JSON:
+**Scope selector** (dropdown):
+| Option | Git Command |
+|--------|------------|
+| All uncommitted (default) | `git diff HEAD` |
+| Staged only | `git diff --cached` |
+| Unstaged only | `git diff` |
+| Branch diff | `git diff $(git merge-base HEAD <main\|master>)..HEAD` |
 
-```json
+### Tab 2: Commit Analysis
+
+Analyzes specific commits or commit ranges.
+
+**Input fields:**
+- **Single commit** — text input for a commit ref → `git show <ref> --format=""`
+- **Commit range** — two inputs (from, to) → `git diff <ref1>..<ref2>`
+- **Recent commits** — clickable list from `git log --oneline -10`
+
+### Tab 3: Code Analysis
+
+Full codebase structural analysis (not diff-based).
+
+**Scope selector:**
+- Entire repo (with configurable ignore patterns: `node_modules`, `.git`, `dist`)
+- Specific directory or file glob
+
+**Analysis types** (checkboxes, multi-select):
+- Complexity hotspots
+- Code patterns and conventions
+- Architecture / dependency structure
+- Potential issues (dead code, unused exports)
+
+This tab uses the middle column for **source code** (not diffs) and the right column for **structural insights** instead of per-hunk annotations.
+
+---
+
+## Three-Column Layout
+
+All three columns fill the viewport height below the scope bar. Columns are **resizable** via draggable dividers. Default widths: **25% / 40% / 35%**. Minimum width per column: 15%.
+
+### Left Column: Feature / File Selector
+
+After analysis, this shows **semantic feature groups** — changes grouped by purpose, not by file.
+
+Each group is a collapsible card:
+```
+┌─────────────────────────────────────┐
+│ ☐  Fix timezone bug in formatter    │
+│     3 files · Bug fix               │
+│                                     │
+│   ☐ src/utils/date.ts (L12-18)     │
+│   ☐ src/utils/tz.ts (L4-9)         │
+│   ☐ tests/date.test.ts (L22-40)    │
+└─────────────────────────────────────┘
+```
+
+**Behavior:**
+- Clicking a **group header** selects all files and scrolls the middle column to the first file's diff
+- Clicking a **file** scrolls to that specific file's diff in the middle column
+- Checkboxes mark items as "reviewed" (visual only — green checkmark, strikethrough style)
+- A file may appear in **multiple groups** if different hunks serve different purposes
+- Groups are ordered by significance (most impactful first)
+- An **"All changes"** group is always present at the bottom
+- A **progress indicator** shows "3/7 files reviewed"
+
+**Semantic categories** for grouping (not exhaustive — the AI determines categories from context):
+- Bug fix
+- New feature
+- Refactor / code cleanup
+- Configuration change
+- Test additions/modifications
+- Dependency updates
+- Documentation
+- Performance improvement
+- Security fix
+- Style / formatting
+
+**Group title convention:** Imperative tense, under 60 characters (e.g., "Fix timezone bug in date formatter", not "Fixed" or "Fixing").
+
+### Middle Column: Diff / Source View
+
+Full syntax highlighting via Shiki.
+
+**For Git Changes and Commit Analysis tabs:**
+- Unified diff format with `+`/`-` line coloring (green additions, red deletions)
+- File headers separating each file's diff:
+  ```
+  ── src/utils/date.ts ──────────────────────────
+  ```
+- Line numbers on both sides (old and new)
+- Collapsed unchanged context with "Show N more lines" expanders
+- Copy button per hunk
+
+**For Code Analysis tab:**
+- Full source files with syntax highlighting
+- Regions of interest highlighted with subtle background coloring
+
+### Right Column: AI Annotations
+
+Claude's analysis, aligned to corresponding code in the middle column.
+
+**For Git Changes and Commit Analysis tabs**, each file gets:
+
+```
+┌─────────────────────────────────────┐
+│ ✦ What changed                      │
+│   Replaced native getTimezoneOffset │
+│   with timezone-aware helper that   │
+│   accepts target timezone string.   │
+│                                     │
+│ ✦ Why it matters                    │
+│   getTimezoneOffset() ignores the   │
+│   target timezone — root cause of   │
+│   dates shifting by hours.          │
+│                                     │
+│ ✦ Review hint                       │
+│   Verify getTimezoneOffset handles  │
+│   DST transitions correctly.        │
+└─────────────────────────────────────┘
+```
+
+**For Code Analysis tab**, annotations are structural insights: complexity scores, pattern observations, dependency relationships, suggested improvements.
+
+### Synchronized Scrolling
+
+The middle and right columns **scroll together**. When the user scrolls diffs, annotations stay aligned with their corresponding hunks.
+
+**Implementation approach:**
+1. Each diff hunk in the middle column has a `data-file-id` attribute
+2. Each annotation card in the right column has a matching `data-file-id`
+3. On scroll, find the topmost visible `data-file-id` and scroll the other column to match
+4. Debounce at 16ms, use `scrollIntoView({ behavior: "smooth", block: "start" })`
+5. Prevent infinite loops by disabling the other column's listener during programmatic scrolls
+6. A **lock icon** in the right column header toggles sync on/off
+
+### Search Bar
+
+A search bar spans the middle + right columns. It:
+- Filters/highlights matches in both diff content and AI annotations
+- Shows match count ("12 matches")
+- Has prev/next navigation (↑/↓ or Enter/Shift+Enter)
+- Supports a regex toggle button
+
+---
+
+## API Routes
+
+### `POST /api/analyze`
+
+Main analysis endpoint.
+
+**Request body:**
+```typescript
 {
-  "name": "review-changes",
-  "version": "1.0.0",
-  "description": "Human-guided code review: groups git changes by logical feature and shows annotated diffs",
-  "author": {
-    "name": "Your Name"
-  },
-  "license": "MIT"
+  repoPath: string;
+  scope: "all" | "staged" | "unstaged" | "branch" | "commit" | "range";
+  commitRef?: string;
+  fromRef?: string;
+  toRef?: string;
+  apiKey: string;
 }
 ```
 
----
+**Processing:**
+1. Validate `repoPath` is a git repo (`git rev-parse --is-inside-work-tree`)
+2. Run the appropriate git command based on scope
+3. If diff is empty → return `{ groups: [], diff: "", message: "No changes found" }`
+4. Hash the diff (SHA-256) and check SQLite cache
+5. If cache hit → return cached result with `cached: true`
+6. Send diff to Claude for semantic grouping
+7. Parse Claude's JSON response into feature groups
+8. Store in SQLite cache
+9. Return result
 
-## File 2: `agents/diff-analyzer.md`
+**Response:**
+```typescript
+{
+  groups: FeatureGroup[];
+  rawDiff: string;
+  analyzedAt: string;   // ISO timestamp
+  cached: boolean;
+}
 
-### Frontmatter
+interface FeatureGroup {
+  id: string;           // Generated UUID
+  title: string;        // Imperative, <60 chars
+  summary: string;      // One sentence
+  category: string;     // "bug-fix", "feature", "refactor", etc.
+  significance: number; // 1-10, for ordering
+  files: FileChange[];
+}
 
-```yaml
----
-name: diff-analyzer
-description: Analyzes git diffs and groups changes into logical features by purpose. Used by the review-changes command.
-tools: Bash, Read, Grep, Glob
-model: sonnet
----
+interface FileChange {
+  path: string;
+  lineRange?: string;   // e.g. "12-18"
+  description: string;
+  diff: string;         // Relevant diff hunks for this file in this group
+  annotations: {
+    whatChanged: string;
+    whyItMatters: string;
+    reviewHint: string;
+  };
+}
 ```
 
-### Body (system prompt)
+### `POST /api/analyze-codebase`
 
-Write a system prompt that instructs the agent to:
+For the Code Analysis tab. Sends file contents (not diffs) and requests structural analysis. Same caching pattern.
 
-1. **Receive** a git diff passed as input from the calling command
-2. **Analyze** the changes and group them into logical features based on **purpose**, not file boundaries
-   - A single file may appear in multiple feature groups if it contains changes serving different purposes
-   - Look for patterns: bug fixes, new features, refactoring, configuration changes, test additions, dependency updates
-3. **Return** a structured markdown response with this format for each feature:
+### `GET /api/repo/validate?path=<path>`
+
+Returns `{ valid: boolean, branch: string, remoteUrl?: string }`.
+
+### `GET /api/repo/commits?path=<path>&count=10`
+
+Returns `{ commits: { hash: string, message: string, author: string, date: string }[] }`.
+
+---
+
+## Claude API Integration
+
+### Semantic Grouping Prompt
+
+System prompt for the grouping call:
 
 ```
-## Feature: <short imperative title, under 60 chars>
+You are a semantic diff analyzer. You receive a git diff and group the changes
+by PURPOSE — not by file. A single file may appear in multiple groups if
+different hunks serve different purposes.
 
-**Summary:** <one-sentence description of what this group of changes accomplishes>
+Rules:
+- Group titles: imperative tense, under 60 characters
+- Order groups by significance (most impactful first)
+- Always include an "All changes" group at the end listing every file
+- For very large diffs (50+ files), limit to 8 purpose groups + "All changes"
+- Merge minor/trivial groups together
+- For each file in each group, provide three annotations:
+  1. What changed — factual summary of modifications
+  2. Why it matters — purpose and impact
+  3. Review hint — what reviewers should watch for
 
-**Files:**
-- `path/to/file.ts` (lines 12-45) — <brief note on what changed in this file for this feature>
-- `path/to/other.ts` (lines 100-120) — <brief note>
-
-**Files changed:** <count>
+Respond in JSON matching this exact schema:
+{
+  "groups": [
+    {
+      "title": "Fix timezone bug in date formatter",
+      "summary": "Replaces naive timezone offset with timezone-aware helper",
+      "category": "bug-fix",
+      "significance": 9,
+      "files": [
+        {
+          "path": "src/utils/date.ts",
+          "lineRange": "12-18",
+          "description": "Swapped getTimezoneOffset for tz-aware helper",
+          "annotations": {
+            "whatChanged": "...",
+            "whyItMatters": "...",
+            "reviewHint": "..."
+          }
+        }
+      ]
+    }
+  ]
+}
 ```
 
-4. **Always** include an "All changes" feature as the last group that encompasses every file
-5. **Order** features by significance (most impactful first)
-6. Keep titles concise and in imperative form (e.g., "Add rate limiting to API endpoints", not "Rate limiting was added")
-7. Keep summaries to one sentence
-8. If the diff is empty or contains no meaningful changes, say so clearly
+### Model Selection
 
----
+- Default: `claude-sonnet-4-6` (fast, cost-effective for most diffs)
+- Deep analysis toggle: `claude-opus-4-6` (for complex or large changes)
 
-## File 3: `commands/review-changes.md`
+### API Call
 
-### Frontmatter
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
 
-```yaml
----
-description: Review git changes grouped by logical feature with annotated diffs
-argument-hint: [staged|unstaged|branch|commit <ref>|<ref1>..<ref2>]
-allowed-tools: Bash, Read, Grep, Glob, Agent, AskUserQuestion
----
+const client = new Anthropic({ apiKey });
+
+const response = await client.messages.create({
+  model: "claude-sonnet-4-6",
+  max_tokens: 8192,
+  system: SEMANTIC_GROUPING_SYSTEM_PROMPT,
+  messages: [
+    {
+      role: "user",
+      content: `Analyze the following git diff and group changes by semantic purpose.\n\n<diff>\n${diff}\n</diff>`,
+    },
+  ],
+});
 ```
 
-### Body (command prompt)
-
-Write a command prompt that instructs Claude to execute the following 5-step workflow:
-
-**Step 1 — Parse arguments and get the diff:**
-
-Interpret `$ARGUMENTS` to determine the correct git diff command:
-
-| `$ARGUMENTS` value | Git command |
-|---|---|
-| *(empty)* | `git diff` (all uncommitted changes, staged + unstaged) |
-| `staged` | `git diff --cached` |
-| `unstaged` | `git diff` |
-| `branch` | `git diff $(git merge-base HEAD main)..HEAD` (auto-detect: try `main`, fall back to `master`) |
-| `commit <ref>` | `git show <ref>` |
-| `<ref1>..<ref2>` | `git diff <ref1>..<ref2>` |
-
-Before running the diff:
-- Verify the current directory is a git repository (run `git rev-parse --is-inside-work-tree`)
-- If not a git repo, inform the user and stop
-
-Run the git diff command using Bash. If the diff is empty, inform the user there are no changes to review and stop.
-
-**Step 2 — Analyze changes with the diff-analyzer agent:**
-
-Use the `Agent` tool to spawn the `diff-analyzer` agent. Pass the full diff output to the agent as context in the prompt. The agent will return a structured list of feature groups.
-
-**Step 3 — Present feature selection:**
-
-Use `AskUserQuestion` to present the feature groups as selectable options:
-- Each option's **label**: feature title + file count, e.g., `Add rate limiting (3 files)`
-- Each option's **description**: the one-line summary from the agent's analysis
-- Include "All changes (N files)" as the last option
-- If there is only one feature group (besides "All changes"), skip selection and review it directly
-
-**Step 4 — Show annotated diff:**
-
-For the selected feature, display an annotated diff:
-- Print a feature header: `━━━ Feature: <title> ━━━━━━`
-- For each file in the feature:
-  - Print a file header: `── <file path> ──────────────`
-  - Show the relevant diff hunks (the actual `+`/`-` lines from the diff)
-  - After each file's hunks, print an annotation block using `│` prefix for visual distinction:
-    - `│ ✦ What changed:` — factual summary of the code modification
-    - `│ ✦ Why it matters:` — the purpose/impact of this change in the context of the feature
-    - `│ ✦ Review hint:` — what a reviewer should pay attention to (edge cases, potential issues, style concerns)
-
-**Step 5 — Iterate or finish:**
-
-After displaying the annotated diff, use `AskUserQuestion` to ask what to do next:
-- Options: "Review another feature", "Finish review"
-- If "Review another feature": go back to Step 3 (show feature selection again, excluding already-reviewed features or showing them as reviewed)
-- If "Finish review": print a brief summary of what was reviewed (which features, how many files) and end
+For diffs exceeding **100KB**, split into chunks by file, analyze in parallel, then merge groups.
 
 ---
 
-## File 4: `README.md`
+## SQLite Schema (Drizzle ORM)
 
-Write a README with these sections:
+```typescript
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 
-### What it does
-One paragraph explaining the plugin: groups git changes by logical feature, lets you pick one, shows annotated diffs with explanations. Emphasize that it helps the *human* review — it's not automated bug-finding.
+export const analysisCache = sqliteTable("analysis_cache", {
+  id: text("id").primaryKey(),
+  repoPath: text("repo_path").notNull(),
+  diffHash: text("diff_hash").notNull(),     // SHA-256 of raw diff
+  scope: text("scope").notNull(),
+  result: text("result").notNull(),          // JSON stringified FeatureGroup[]
+  rawDiff: text("raw_diff").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
 
-### Installation
+export const reviewState = sqliteTable("review_state", {
+  id: text("id").primaryKey(),
+  analysisId: text("analysis_id").notNull().references(() => analysisCache.id),
+  reviewedFiles: text("reviewed_files").notNull(),  // JSON array of file paths
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+```
+
+Cache key: SHA-256 hash of raw diff content. Same diff for same repo → return cached result.
+
+---
+
+## Component Hierarchy
+
+```
+<App>
+  <TopBar>
+    <RepoPathInput />          // With ✓/✗ validation indicator
+    <ApiKeyInput />            // Masked, stored in localStorage
+    <SettingsButton />         // Dark mode toggle, clear cache, etc.
+  </TopBar>
+  <TabBar>
+    <Tab label="Git Changes" />
+    <Tab label="Commit Analysis" />
+    <Tab label="Code Analysis" />
+  </TabBar>
+  <ScopeSelector />            // Changes per active tab
+  <AnalyzeButton />            // With loading spinner
+  <ThreeColumnLayout>
+    <LeftColumn>
+      <ReviewProgress />       // "3/7 files reviewed"
+      <FeatureGroupList>
+        <FeatureGroupCard />   // Collapsible, checkboxes
+      </FeatureGroupList>
+    </LeftColumn>
+    <ColumnResizer />
+    <MiddleColumn>
+      <SearchBar />            // Spans middle + right
+      <DiffView />             // Or SourceView for Code Analysis
+    </MiddleColumn>
+    <ColumnResizer />
+    <RightColumn>
+      <ScrollSyncToggle />     // Lock icon
+      <AnnotationList>
+        <AnnotationCard />     // What changed / Why / Review hint
+      </AnnotationList>
+    </RightColumn>
+  </ThreeColumnLayout>
+</App>
+```
+
+---
+
+## File Structure
+
+```
+src/
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx                        // Main SPA
+│   ├── globals.css
+│   └── api/
+│       ├── analyze/route.ts            // POST — diff analysis
+│       ├── analyze-codebase/route.ts   // POST — code analysis
+│       └── repo/
+│           ├── validate/route.ts       // GET — validate git repo
+│           └── commits/route.ts        // GET — recent commits
+├── components/
+│   ├── TopBar.tsx
+│   ├── TabBar.tsx
+│   ├── ScopeSelector.tsx
+│   ├── ThreeColumnLayout.tsx
+│   ├── FeatureGroupCard.tsx
+│   ├── DiffView.tsx
+│   ├── AnnotationCard.tsx
+│   ├── SearchBar.tsx
+│   ├── ColumnResizer.tsx
+│   └── ScrollSyncToggle.tsx
+├── lib/
+│   ├── git.ts                          // Git command helpers (execFile)
+│   ├── claude.ts                       // Anthropic SDK wrapper
+│   ├── cache.ts                        // SQLite cache operations
+│   └── diff-parser.ts                  // Parse unified diff → structured format
+├── db/
+│   ├── schema.ts                       // Drizzle schema
+│   └── index.ts                        // DB connection
+├── types/
+│   └── index.ts                        // Shared TypeScript interfaces
+└── hooks/
+    ├── useScrollSync.ts
+    ├── useResizableColumns.ts
+    └── useAnalysis.ts                  // Data fetching hook for analysis
+```
+
+---
+
+## Security
+
+- **API key:** Never log or persist server-side. Passed per-request from the client (stored in localStorage). Shown masked in the UI.
+- **Git commands:** Always use `execFile` (not `exec`) to prevent shell injection. Validate `repoPath` is an absolute path that exists and contains `.git` before running any commands.
+- **Input sanitization:** Commit refs are validated against `^[a-zA-Z0-9._/~^-]+$` before use in git commands.
+
+---
+
+## UX Details
+
+- **Dark mode:** System-preference detection via Tailwind `dark:` variants. Manual toggle in settings. Shiki themes: `github-dark` / `github-light`.
+- **Loading states:** Skeleton/shimmer in the right column while Claude analyzes. Progress bar on the Analyze button.
+- **Empty states:** Friendly messages for no changes, no repo, invalid key.
+- **Error handling:** Toast notifications for API errors with retry button. Don't clear previous results on error.
+- **Large diff warning:** If diff exceeds 50 files, show confirmation: "Large diff detected (N files). Analysis may take longer and cost more."
+- **Responsive:** Below 768px, the three-column layout collapses to a tabbed single-column view.
+- **Keyboard navigation:** All interactive elements accessible via keyboard. ARIA labels on custom components.
+- **Persist column widths** in localStorage.
+
+---
+
+## Getting Started
 
 ```bash
-# From a local directory
-claude --plugin-dir ./review-changes
-
-# Or install permanently
-claude plugin install ./review-changes
+npx create-next-app@latest code-review --typescript --tailwind --app --src-dir
+cd code-review
+npm install @anthropic-ai/sdk drizzle-orm better-sqlite3 shiki
+npm install -D drizzle-kit @types/better-sqlite3
 ```
 
-### Usage
-
-```bash
-# Review all uncommitted changes (default)
-/review-changes
-
-# Review only staged changes
-/review-changes staged
-
-# Review only unstaged changes
-/review-changes unstaged
-
-# Review current branch vs main/master
-/review-changes branch
-
-# Review a specific commit
-/review-changes commit abc123
-
-# Review a range of commits
-/review-changes abc123..def456
-```
-
-### How it differs from other review plugins
-Brief explanation: `/code-review` and `/review-pr` do automated AI review (AI finds issues). `/review-changes` does human-guided review (AI helps the human understand changes).
-
----
-
-## File 5: `LICENSE`
-
-Standard MIT License with the current year.
-
-</file_specifications>
-
-<examples>
-### Example: Feature Selection Menu
-
-When the user runs `/review-changes`, after the diff-analyzer agent returns its analysis, the command presents this via `AskUserQuestion`:
-
-```
-3 feature groups detected in current changes:
-
-? Which feature would you like to review?
-
-  ● Add rate limiting to API endpoints (3 files)
-    Adds express-rate-limit middleware with per-route configuration
-
-  ○ Fix timezone bug in date formatter (2 files)
-    Corrects UTC offset calculation in formatDate utility
-
-  ○ Refactor database connection pooling (4 files)
-    Replaces single connection with pg-pool, adds retry logic
-
-  ○ All changes (7 files)
-    View all changes across all features
-```
-
-### Example: Annotated Diff Output
-
-After selecting "Fix timezone bug in date formatter":
-
-```
-━━━ Feature: Fix timezone bug in date formatter ━━━━━━━━━━━━
-
-── src/utils/date.ts ──────────────────────────────────────
-
-@@ -12,7 +12,7 @@ export function formatDate(date: Date, tz: string): string {
--  const offset = date.getTimezoneOffset();
-+  const offset = getTimezoneOffset(date, tz);
-   const adjusted = new Date(date.getTime() + offset * 60000);
--  return adjusted.toISOString().slice(0, 10);
-+  return formatISO(adjusted, { representation: 'date' });
-
-│ ✦ What changed: Replaced native getTimezoneOffset() with a
-│   timezone-aware helper that accepts a tz string, and switched
-│   from manual ISO slicing to date-fns formatISO.
-│
-│ ✦ Why it matters: getTimezoneOffset() returns the LOCAL system
-│   offset, ignoring the target timezone entirely — this was the
-│   root cause of dates shifting by one day for users in UTC+ zones.
-│
-│ ✦ Review hint: Verify that getTimezoneOffset handles DST
-│   transitions correctly. Check if date-fns is already a
-│   dependency or if this introduces a new one.
-
-── tests/utils/date.test.ts ───────────────────────────────
-
-@@ -45,6 +45,18 @@ describe('formatDate', () => {
-+  it('handles positive UTC offsets correctly', () => {
-+    const date = new Date('2024-01-15T23:30:00Z');
-+    expect(formatDate(date, 'Asia/Tokyo')).toBe('2024-01-16');
-+  });
-+
-+  it('handles DST transitions', () => {
-+    const date = new Date('2024-03-10T09:00:00Z');
-+    expect(formatDate(date, 'America/New_York')).toBe('2024-03-10');
-+  });
-
-│ ✦ What changed: Added two test cases covering UTC+ offset
-│   (Tokyo, UTC+9) and a DST transition edge case.
-│
-│ ✦ Why it matters: These tests directly reproduce the reported
-│   bug scenario — dates near midnight in positive-offset timezones.
-│
-│ ✦ Review hint: Consider adding a test for UTC-negative offsets
-│   and for the exact moment of DST switch (2:00 AM local).
-```
-
-### Example: Iteration Prompt
-
-After displaying the annotated diff:
-
-```
-? What would you like to do next?
-
-  ● Review another feature
-    Select a different feature group to review
-
-  ○ Finish review
-    End the review session with a summary
-```
-</examples>
-
-<constraints>
-- **This is a Claude Code plugin, not a standalone CLI.** The plugin consists entirely of markdown files and a JSON manifest. Do not create package.json, tsconfig.json, or any JavaScript/TypeScript source files.
-- **No external dependencies.** Do not use or reference `commander`, `inquirer`, `prompts`, `chalk`, `@anthropic-ai/sdk`, `child_process`, or any npm packages. Claude Code provides all needed capabilities through its native tools.
-- **One agent only.** The `diff-analyzer` agent handles all diff analysis. Do not create additional agents, utility scripts, or helper files.
-- **Group by purpose, not by file.** This is the core differentiator — a file may appear in multiple feature groups because it contains changes serving different purposes.
-- **Use `AskUserQuestion` for all user interaction.** Do not instruct Claude to print numbered menus and wait for text input. `AskUserQuestion` provides proper interactive selection.
-- **Keep the agent focused.** The `diff-analyzer` agent only analyzes and groups. It does not display results, interact with the user, or annotate diffs. The command handles all of that.
-- **Follow existing Claude Code conventions.** Use standard frontmatter fields, standard directory layout, standard tool names. Do not invent custom conventions.
-- **Keep it simple.** No config files, no environment variables, no build steps, no hooks, no MCP servers. The plugin should work immediately after installation.
-</constraints>
-
-<quality_checks>
-After creating all 5 files, verify:
-
-- [ ] Plugin directory has exactly: `.claude-plugin/plugin.json`, `commands/review-changes.md`, `agents/diff-analyzer.md`, `README.md`, `LICENSE`
-- [ ] `plugin.json` is valid JSON with `name`, `version`, and `description` fields
-- [ ] `agents/diff-analyzer.md` has YAML frontmatter with `name`, `description`, `tools`, and `model` fields
-- [ ] `agents/diff-analyzer.md` body instructs the agent to group changes by purpose and return structured markdown
-- [ ] `commands/review-changes.md` has YAML frontmatter with `description`, `argument-hint`, and `allowed-tools` fields
-- [ ] `commands/review-changes.md` body describes the complete 5-step workflow (parse args → analyze → select → annotate → iterate)
-- [ ] The command handles all argument variants: empty, `staged`, `unstaged`, `branch`, `commit <ref>`, `<ref>..<ref>`
-- [ ] The command handles edge cases: not a git repo, no changes found, only one feature group
-- [ ] No references to standalone dependencies anywhere (no commander, inquirer, chalk, @anthropic-ai/sdk, child_process)
-- [ ] No JavaScript or TypeScript files — the plugin is pure markdown + JSON
-- [ ] `AskUserQuestion` is used for feature selection and iteration (not manual text menus)
-- [ ] The `Agent` tool is used to spawn `diff-analyzer` (not inline analysis in the command)
-- [ ] Loading with `claude --plugin-dir ./review-changes` should make `/review-changes` available as a slash command
-</quality_checks>
+Then implement the file structure above, starting with:
+1. Database schema and connection (`db/`)
+2. Git command helpers (`lib/git.ts`)
+3. API routes (`app/api/`)
+4. Core UI layout (`components/ThreeColumnLayout.tsx`, `ColumnResizer.tsx`)
+5. Feature group cards and diff view
+6. Claude integration and annotation rendering
+7. Search, scroll sync, and polish
