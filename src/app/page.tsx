@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+
 import TopBar from "@/components/TopBar";
 import TabBar from "@/components/TabBar";
 import ScopeSelector from "@/components/ScopeSelector";
@@ -9,11 +10,12 @@ import FeatureGroupCard from "@/components/FeatureGroupCard";
 import DiffView from "@/components/DiffView";
 import AnnotationCard from "@/components/AnnotationCard";
 import RepoFileCard from "@/components/RepoFileCard";
+import FileContentView from "@/components/FileContentView";
 import SearchBar from "@/components/SearchBar";
 import ScrollSyncToggle from "@/components/ScrollSyncToggle";
 import { useAnalysis } from "@/hooks/useAnalysis";
 import { useScrollSync } from "@/hooks/useScrollSync";
-import type { TabType, DiffScope, FeatureGroup, FileChange } from "@/types";
+import type { TabType, DiffScope, RepoScope, FeatureGroup, FileChange } from "@/types";
 
 const REPO_PATH_STORAGE = "code-review-repo-path";
 
@@ -29,9 +31,11 @@ export default function Home() {
   const [commitRef, setCommitRef] = useState("");
   const [fromRef, setFromRef] = useState("");
   const [toRef, setToRef] = useState("");
+  const [repoScope, setRepoScope] = useState<RepoScope>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [reviewedFiles, setReviewedFiles] = useState<Set<string>>(new Set());
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const repoContentRef = useRef<HTMLDivElement>(null);
 
   // Analysis hook
   const {
@@ -98,11 +102,11 @@ export default function Home() {
   const handleAnalyze = useCallback(() => {
     if (!repoPath) return;
     if (activeTab === "code-analysis") {
-      analyzeRepo(repoPath);
+      analyzeRepo(repoPath, repoScope);
     } else {
       analyze(repoPath, scope, { commitRef, fromRef, toRef });
     }
-  }, [repoPath, activeTab, scope, commitRef, fromRef, toRef, analyze, analyzeRepo]);
+  }, [repoPath, activeTab, repoScope, scope, commitRef, fromRef, toRef, analyze, analyzeRepo]);
 
   const handleToggleFileReview = useCallback(
     (groupId: string, filePath: string) => {
@@ -122,6 +126,14 @@ export default function Home() {
 
   const handleFileClick = useCallback(
     (filePath: string) => {
+      // For repo analysis, scroll within the repo content panel
+      if (repoContentRef.current) {
+        const el = repoContentRef.current.querySelector(`[data-file-id="${filePath}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+      }
       scrollToFile(filePath);
     },
     [scrollToFile]
@@ -217,6 +229,8 @@ export default function Home() {
         activeTab={activeTab}
         scope={scope}
         onScopeChange={setScope}
+        repoScope={repoScope}
+        onRepoScopeChange={setRepoScope}
         commitRef={commitRef}
         onCommitRefChange={setCommitRef}
         fromRef={fromRef}
@@ -259,45 +273,80 @@ export default function Home() {
         </div>
       )}
 
-      {/* Layout: two-column for repo analysis, three-column for diff analysis */}
+      {/* Layout: three-column for both repo and diff analysis */}
       {isRepoAnalysis || activeTab === "code-analysis" ? (
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Left: groups */}
-          <div className="w-72 shrink-0 overflow-y-auto border-r border-zinc-200 dark:border-zinc-700">
-            {leftColumn}
-          </div>
+        <ThreeColumnLayout
+          left={leftColumn}
+          middle={
+            <div className="flex flex-col h-full">
+              <SearchBar onSearchChange={setSearchQuery} />
+              <div ref={repoContentRef} className="flex-1 overflow-y-auto">
+                {loading && (
+                  <div className="p-4 space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="h-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse"
+                      />
+                    ))}
+                  </div>
+                )}
 
-          {/* Right: combined file cards */}
-          <div className="flex-1 flex flex-col min-w-0">
-            <SearchBar onSearchChange={setSearchQuery} />
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {loading && (
-                <div className="space-y-4">
-                  {[1, 2, 3].map((i) => (
-                    <div
-                      key={i}
-                      className="h-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse"
-                    />
-                  ))}
-                </div>
-              )}
-
-              {displayFiles.map((file, idx) => (
-                <RepoFileCard
-                  key={`${file.path}-${idx}`}
-                  file={file}
+                <FileContentView
+                  files={displayFiles}
                   searchQuery={searchQuery}
                 />
-              ))}
 
-              {!loading && displayFiles.length === 0 && (
-                <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
-                  Run a code analysis to see architecture details
-                </div>
-              )}
+                {!loading && displayFiles.length === 0 && (
+                  <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
+                    Run a code analysis to see file contents
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </div>
+          }
+          right={
+            <div className="flex flex-col h-full">
+              <div className="flex items-center px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900">
+                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  AI Annotations
+                </span>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                {loading && (
+                  <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4 space-y-3"
+                      >
+                        <div className="h-3 w-24 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
+                        <div className="space-y-2">
+                          <div className="h-2 w-full bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
+                          <div className="h-2 w-3/4 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {displayFiles.map((file, idx) => (
+                  <RepoFileCard
+                    key={`${file.path}-${idx}`}
+                    file={file}
+                    searchQuery={searchQuery}
+                  />
+                ))}
+
+                {!loading && displayFiles.length === 0 && (
+                  <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
+                    Annotations will appear here
+                  </div>
+                )}
+              </div>
+            </div>
+          }
+        />
       ) : (
         <ThreeColumnLayout
           left={leftColumn}

@@ -52,8 +52,11 @@ export interface AnalyzeRequest {
   toRef?: string;
 }
 
+export type RepoScope = "all" | "committed";
+
 export interface RepoAnalysisRequest {
   repoPath: string;
+  repoScope?: RepoScope;
 }
 
 export type TabType = "git-changes" | "commit-analysis" | "code-analysis";

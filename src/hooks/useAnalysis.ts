@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import type { AnalysisResult, DiffScope } from "@/types";
+import type { AnalysisResult, DiffScope, RepoScope } from "@/types";
 
 interface UseAnalysisReturn {
   result: AnalysisResult | null;
@@ -13,7 +13,7 @@ interface UseAnalysisReturn {
     scope: DiffScope,
     options?: { commitRef?: string; fromRef?: string; toRef?: string }
   ) => Promise<void>;
-  analyzeRepo: (repoPath: string) => Promise<void>;
+  analyzeRepo: (repoPath: string, repoScope?: RepoScope) => Promise<void>;
   showDiffResult: () => void;
   showRepoResult: () => void;
 }
@@ -67,7 +67,7 @@ export function useAnalysis(): UseAnalysisReturn {
     []
   );
 
-  const analyzeRepo = useCallback(async (repoPath: string) => {
+  const analyzeRepo = useCallback(async (repoPath: string, repoScope: RepoScope = "committed") => {
     setLoading(true);
     setError(null);
     setMessage(null);
@@ -76,7 +76,7 @@ export function useAnalysis(): UseAnalysisReturn {
       const res = await fetch("/api/analyze-repo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoPath }),
+        body: JSON.stringify({ repoPath, repoScope }),
       });
 
       const data = await res.json();

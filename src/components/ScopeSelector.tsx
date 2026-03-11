@@ -1,12 +1,14 @@
 "use client";
 
-import type { TabType, DiffScope, CommitInfo } from "@/types";
+import type { TabType, DiffScope, RepoScope, CommitInfo } from "@/types";
 import { useState, useEffect } from "react";
 
 interface ScopeSelectorProps {
   activeTab: TabType;
   scope: DiffScope;
   onScopeChange: (scope: DiffScope) => void;
+  repoScope: RepoScope;
+  onRepoScopeChange: (scope: RepoScope) => void;
   commitRef: string;
   onCommitRefChange: (ref: string) => void;
   fromRef: string;
@@ -22,6 +24,8 @@ export default function ScopeSelector({
   activeTab,
   scope,
   onScopeChange,
+  repoScope,
+  onRepoScopeChange,
   commitRef,
   onCommitRefChange,
   fromRef,
@@ -154,9 +158,33 @@ export default function ScopeSelector({
       )}
 
       {activeTab === "code-analysis" && (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          Analyze full repository architecture and features
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Analyze full repository architecture and features
+          </span>
+          <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-md p-0.5">
+            <button
+              onClick={() => onRepoScopeChange("committed")}
+              className={`px-2 py-1 text-xs rounded transition-colors ${
+                repoScope === "committed"
+                  ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+              }`}
+            >
+              Committed
+            </button>
+            <button
+              onClick={() => onRepoScopeChange("all")}
+              className={`px-2 py-1 text-xs rounded transition-colors ${
+                repoScope === "all"
+                  ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+              }`}
+            >
+              All files
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="ml-auto">

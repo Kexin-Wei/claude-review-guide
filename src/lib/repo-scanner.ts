@@ -40,13 +40,33 @@ export interface RepoSnapshot {
   };
 }
 
-export async function scanRepo(repoPath: string): Promise<RepoSnapshot> {
+export async function scanRepo(
+  repoPath: string,
+  includeUncommitted: boolean = false
+): Promise<RepoSnapshot> {
+  // Get tracked files
   const { stdout } = await execFileAsync("git", ["ls-files"], {
     cwd: repoPath,
     maxBuffer: 10 * 1024 * 1024,
   });
 
-  const allFiles = stdout.trim().split("\n").filter(Boolean);
+  const trackedFiles = stdout.trim().split("\n").filter(Boolean);
+  let allFiles = trackedFiles;
+
+  if (includeUncommitted) {
+    // Include untracked files (new files not yet committed)
+    try {
+      const result = await execFileAsync(
+        "git",
+        ["ls-files", "--others", "--exclude-standard"],
+        { cwd: repoPath, maxBuffer: 10 * 1024 * 1024 }
+      );
+      const untrackedFiles = result.stdout.trim().split("\n").filter(Boolean);
+      allFiles = [...trackedFiles, ...untrackedFiles];
+    } catch {
+      // ignore — untracked listing is best-effort
+    }
+  }
 
   const fileTypes: Record<string, number> = {};
   for (const file of allFiles) {
