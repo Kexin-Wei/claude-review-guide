@@ -1,6 +1,6 @@
 # Prompt: Build a Web-Based Semantic Code Review Tool
 
-You are building a **web-based code review tool** that semantically groups git diffs by purpose and provides AI-powered annotations. It replaces a CLI plugin that was limited by terminal UX — the web version should be visual, persistent, and easy to navigate.
+You are building a **web-based code review tool** that semantically groups git diffs by purpose and provides AI-powered annotations. It also performs full repository architecture analysis. It replaces a CLI plugin that was limited by terminal UX — the web version should be visual, persistent, and easy to navigate.
 
 ---
 
@@ -15,7 +15,7 @@ The existing CLI plugin (`review-changes`) works inside Claude Code. It:
   - **Why it matters** — purpose and impact in context
   - **Review hint** — what reviewers should watch for
 
-The web app preserves all of this logic but provides a **three-column visual layout** instead of sequential terminal output, and **persists results** in SQLite so analysis isn't repeated.
+The web app preserves all of this logic, adds **full repository architecture analysis**, and provides a **visual multi-column layout** instead of sequential terminal output with **persistent results** in SQLite.
 
 ---
 
@@ -27,23 +27,55 @@ The web app preserves all of this logic but provides a **three-column visual lay
 | Language | TypeScript (strict mode) |
 | UI | React, Tailwind CSS |
 | Database | SQLite via Drizzle ORM + `better-sqlite3` |
-| AI | Anthropic SDK (`@anthropic-ai/sdk`) |
+| AI | Claude CLI subprocess (`claude -p`) — uses Claude Code subscription auth |
 | Syntax Highlighting | Shiki |
 | Package Manager | npm |
 
-Single Next.js project — no separate backend service.
+Single Next.js project — no separate backend service. No API key required — the backend spawns the `claude` CLI which authenticates via the user's existing Claude Code session.
 
 ---
 
 ## Application Layout
 
-The app is a **single-page application** with this structure:
+The app is a **single-page application** with two layout modes:
+
+### Code Analysis (Two-Column)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  [Repo Path: /home/user/project ✓]  [API Key: ••••••]  [⚙]    │  ← Top Bar
+│  [Repo Path: /home/user/project ✓]  [main branch]              │  ← Top Bar
 ├──────────────────────────────────────────────────────────────────┤
-│  [ Git Changes ]  [ Commit Analysis ]  [ Code Analysis ]        │  ← Tab Bar
+│  [★ Code Analysis]  [ Git Changes ]  [ Commit Analysis ]        │  ← Tab Bar
+├──────────────────────────────────────────────────────────────────┤
+│  Full repo architecture analysis                  [▶ Analyze]   │  ← Scope Bar
+├──────────────────┬───────────────────────────────────────────────┤
+│                  │  [🔍 Search across files and annotations...] │
+│  Architecture    ├───────────────────────────────────────────────┤
+│  Groups          │                                               │
+│                  │  ┌─ src/lib/claude.ts ──────────────────────┐ │
+│  ★ Architecture  │  │ Claude CLI integration                   │ │
+│    (8 files)     │  │                                          │ │
+│                  │  │ Purpose         │ Key Notes              │ │
+│  ★ Core Features │  │ Spawns claude   │ Uses stdin piping for  │ │
+│    (5 files)     │  │ subprocess for  │ large prompts, robust  │ │
+│                  │  │ AI analysis     │ JSON extraction...     │ │
+│  ★ API/Routes    │  └────────────────────────────────────────────┘ │
+│    (4 files)     │                                               │
+│                  │  ┌─ src/lib/git.ts ─────────────────────────┐ │
+│  12 files        │  │ Git command helpers                      │ │
+│  analyzed        │  │ ...                                      │ │
+│                  │  └────────────────────────────────────────────┘ │
+├──────────────────┴───────────────────────────────────────────────┤
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Git Changes / Commit Analysis (Three-Column)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  [Repo Path: /home/user/project ✓]  [main branch]              │  ← Top Bar
+├──────────────────────────────────────────────────────────────────┤
+│  [ Code Analysis ]  [★ Git Changes]  [ Commit Analysis ]        │  ← Tab Bar
 ├──────────────────────────────────────────────────────────────────┤
 │  Scope: [All uncommitted ▾]                      [▶ Analyze]    │  ← Scope Bar
 ├──────────────┬───────────────────────┬───────────────────────────┤
@@ -68,7 +100,28 @@ The app is a **single-page application** with this structure:
 
 ## Tab Types
 
-### Tab 1: Git Changes
+### Tab 1: Code Analysis (Default)
+
+Full repository architecture analysis. Scans the repo using `git ls-files` and sends a snapshot (file tree, config files, source samples) to Claude.
+
+**Analysis approach:**
+- Uses `git ls-files` for tracked file listing
+- Reads key config files (package.json, tsconfig.json, etc.)
+- Samples source files prioritizing entry points (index, main, app, page, route, layout)
+- Claude groups files by architectural role
+
+**Groups:**
+- **Architecture** (always first) — overall project structure and design decisions
+- Additional groups: Core Features, Data Layer, UI/Components, Configuration, API/Routes, Utilities, etc.
+- Limited to 6-8 groups, ordered by architectural significance
+
+**Layout:** Two-column — groups sidebar on left, file cards with side-by-side annotations on right. Each file card shows:
+- File path and description in the header
+- Left side: Purpose + Significance
+- Right side: Key Notes
+- Visual separation via `divide-x`
+
+### Tab 2: Git Changes
 
 Analyzes uncommitted changes in a git repository.
 
@@ -80,7 +133,7 @@ Analyzes uncommitted changes in a git repository.
 | Unstaged only | `git diff` |
 | Branch diff | `git diff $(git merge-base HEAD <main\|master>)..HEAD` |
 
-### Tab 2: Commit Analysis
+### Tab 3: Commit Analysis
 
 Analyzes specific commits or commit ranges.
 
@@ -89,31 +142,22 @@ Analyzes specific commits or commit ranges.
 - **Commit range** — two inputs (from, to) → `git diff <ref1>..<ref2>`
 - **Recent commits** — clickable list from `git log --oneline -10`
 
-### Tab 3: Code Analysis
+---
 
-Full codebase structural analysis (not diff-based).
+## Tab Switching Behavior
 
-**Scope selector:**
-- Entire repo (with configurable ignore patterns: `node_modules`, `.git`, `dist`)
-- Specific directory or file glob
-
-**Analysis types** (checkboxes, multi-select):
-- Complexity hotspots
-- Code patterns and conventions
-- Architecture / dependency structure
-- Potential issues (dead code, unused exports)
-
-This tab uses the middle column for **source code** (not diffs) and the right column for **structural insights** instead of per-hunk annotations.
+- Switching tabs **does not abort running analyses** — they continue in the background
+- Each tab type caches its last result using `useRef` (not state, to avoid re-renders)
+- `showDiffResult()` and `showRepoResult()` restore cached results when switching tabs
+- Search query and selected group reset on tab switch
 
 ---
 
-## Three-Column Layout
-
-All three columns fill the viewport height below the scope bar. Columns are **resizable** via draggable dividers. Default widths: **25% / 40% / 35%**. Minimum width per column: 15%.
+## Layout Details
 
 ### Left Column: Feature / File Selector
 
-After analysis, this shows **semantic feature groups** — changes grouped by purpose, not by file.
+After analysis, this shows **semantic groups** — changes grouped by purpose (diff tabs) or architectural role (code analysis tab).
 
 Each group is a collapsible card:
 ```
@@ -131,88 +175,80 @@ Each group is a collapsible card:
 - Clicking a **group header** selects all files and scrolls the middle column to the first file's diff
 - Clicking a **file** scrolls to that specific file's diff in the middle column
 - Checkboxes mark items as "reviewed" (visual only — green checkmark, strikethrough style)
-- A file may appear in **multiple groups** if different hunks serve different purposes
 - Groups are ordered by significance (most impactful first)
-- An **"All changes"** group is always present at the bottom
-- A **progress indicator** shows "3/7 files reviewed"
+- An **"All changes"** group is always present at the bottom (diff tabs only)
+- Progress indicator: "3/7 files reviewed" (diff tabs) or "12 files analyzed" (code analysis)
 
-**Semantic categories** for grouping (not exhaustive — the AI determines categories from context):
-- Bug fix
-- New feature
-- Refactor / code cleanup
-- Configuration change
-- Test additions/modifications
-- Dependency updates
-- Documentation
-- Performance improvement
-- Security fix
-- Style / formatting
+**Semantic categories** with color coding:
+- Bug fix, New feature, Refactor / code cleanup
+- Architecture, Data Layer, API, UI, Utility
+- Configuration change, Test, Dependency updates
+- Documentation, Performance, Security fix
 
-**Group title convention:** Imperative tense, under 60 characters (e.g., "Fix timezone bug in date formatter", not "Fixed" or "Fixing").
+**Group title convention:** Imperative tense, under 60 characters.
 
-### Middle Column: Diff / Source View
+### Middle Column: Diff View (Three-Column Mode Only)
 
 Full syntax highlighting via Shiki.
 
-**For Git Changes and Commit Analysis tabs:**
 - Unified diff format with `+`/`-` line coloring (green additions, red deletions)
-- File headers separating each file's diff:
-  ```
-  ── src/utils/date.ts ──────────────────────────
-  ```
+- File headers separating each file's diff
 - Line numbers on both sides (old and new)
-- Collapsed unchanged context with "Show N more lines" expanders
-- Copy button per hunk
 
-**For Code Analysis tab:**
-- Full source files with syntax highlighting
-- Regions of interest highlighted with subtle background coloring
-
-### Right Column: AI Annotations
+### Right Column: AI Annotations (Three-Column Mode Only)
 
 Claude's analysis, aligned to corresponding code in the middle column.
 
-**For Git Changes and Commit Analysis tabs**, each file gets:
-
+Each file gets:
 ```
 ┌─────────────────────────────────────┐
 │ ✦ What changed                      │
 │   Replaced native getTimezoneOffset │
-│   with timezone-aware helper that   │
-│   accepts target timezone string.   │
+│   with timezone-aware helper.       │
 │                                     │
 │ ✦ Why it matters                    │
 │   getTimezoneOffset() ignores the   │
-│   target timezone — root cause of   │
-│   dates shifting by hours.          │
+│   target timezone — root cause.     │
 │                                     │
 │ ✦ Review hint                       │
-│   Verify getTimezoneOffset handles  │
-│   DST transitions correctly.        │
+│   Verify DST transition handling.   │
 └─────────────────────────────────────┘
 ```
 
-**For Code Analysis tab**, annotations are structural insights: complexity scores, pattern observations, dependency relationships, suggested improvements.
+### Combined Right Panel: File Cards (Two-Column Mode — Code Analysis)
 
-### Synchronized Scrolling
+Each file is a `RepoFileCard` with side-by-side layout:
+```
+┌─ src/lib/claude.ts ──────────────────────────────────────┐
+│ Claude CLI integration for AI analysis                    │
+├──────────────────────────┬───────────────────────────────┤
+│ Purpose                  │ Key Notes                     │
+│ Spawns claude subprocess │ Uses stdin piping for large   │
+│ for AI-powered analysis  │ prompts, robust JSON          │
+│                          │ extraction with brace-        │
+│ Significance             │ matching parser. CLAUDECODE   │
+│ Core backend logic that  │ env var bypasses nested       │
+│ connects to Claude via   │ session detection.            │
+│ subscription auth        │                               │
+└──────────────────────────┴───────────────────────────────┘
+```
 
-The middle and right columns **scroll together**. When the user scrolls diffs, annotations stay aligned with their corresponding hunks.
+### Synchronized Scrolling (Three-Column Mode)
 
-**Implementation approach:**
-1. Each diff hunk in the middle column has a `data-file-id` attribute
-2. Each annotation card in the right column has a matching `data-file-id`
+The middle and right columns **scroll together**. When the user scrolls diffs, annotations stay aligned.
+
+**Implementation:**
+1. Each diff hunk has a `data-file-id` attribute
+2. Each annotation card has a matching `data-file-id`
 3. On scroll, find the topmost visible `data-file-id` and scroll the other column to match
 4. Debounce at 16ms, use `scrollIntoView({ behavior: "smooth", block: "start" })`
-5. Prevent infinite loops by disabling the other column's listener during programmatic scrolls
-6. A **lock icon** in the right column header toggles sync on/off
+5. A **toggle** in the right column header enables/disables sync
 
 ### Search Bar
 
-A search bar spans the middle + right columns. It:
+A search bar at the top of the content area:
 - Filters/highlights matches in both diff content and AI annotations
-- Shows match count ("12 matches")
-- Has prev/next navigation (↑/↓ or Enter/Shift+Enter)
-- Supports a regex toggle button
+- Shows match count
 
 ---
 
@@ -220,7 +256,7 @@ A search bar spans the middle + right columns. It:
 
 ### `POST /api/analyze`
 
-Main analysis endpoint.
+Diff analysis endpoint (Git Changes and Commit Analysis tabs).
 
 **Request body:**
 ```typescript
@@ -230,7 +266,6 @@ Main analysis endpoint.
   commitRef?: string;
   fromRef?: string;
   toRef?: string;
-  apiKey: string;
 }
 ```
 
@@ -240,17 +275,51 @@ Main analysis endpoint.
 3. If diff is empty → return `{ groups: [], diff: "", message: "No changes found" }`
 4. Hash the diff (SHA-256) and check SQLite cache
 5. If cache hit → return cached result with `cached: true`
-6. Send diff to Claude for semantic grouping
+6. Send diff to Claude CLI for semantic grouping
 7. Parse Claude's JSON response into feature groups
 8. Store in SQLite cache
-9. Return result
+9. Return result with `type: "diff"`
 
-**Response:**
+### `POST /api/analyze-repo`
+
+Repository architecture analysis endpoint (Code Analysis tab).
+
+**Request body:**
 ```typescript
 {
+  repoPath: string;
+}
+```
+
+**Processing:**
+1. Validate `repoPath` is a git repo
+2. Scan repo using `git ls-files`, read key config files, sample source files
+3. Hash the snapshot and check SQLite cache
+4. If cache hit → return cached result with `cached: true`
+5. Send snapshot to Claude CLI for architecture analysis
+6. Parse JSON response into architecture groups
+7. Store in SQLite cache
+8. Return result with `type: "repo"` and `fileTree`
+
+### `GET /api/repo/validate?path=<path>`
+
+Returns `{ valid: boolean, branch: string }`.
+
+### `GET /api/repo/commits?path=<path>&count=10`
+
+Returns `{ commits: { hash: string, message: string, author: string, date: string }[] }`.
+
+---
+
+## Response Types
+
+```typescript
+{
+  type: "diff" | "repo";
   groups: FeatureGroup[];
-  rawDiff: string;
-  analyzedAt: string;   // ISO timestamp
+  rawDiff: string;          // empty for repo analysis
+  fileTree?: string[];      // only for repo analysis
+  analyzedAt: string;       // ISO timestamp
   cached: boolean;
 }
 
@@ -258,7 +327,7 @@ interface FeatureGroup {
   id: string;           // Generated UUID
   title: string;        // Imperative, <60 chars
   summary: string;      // One sentence
-  category: string;     // "bug-fix", "feature", "refactor", etc.
+  category: string;     // "bug-fix", "feature", "architecture", etc.
   significance: number; // 1-10, for ordering
   files: FileChange[];
 }
@@ -267,7 +336,7 @@ interface FileChange {
   path: string;
   lineRange?: string;   // e.g. "12-18"
   description: string;
-  diff: string;         // Relevant diff hunks for this file in this group
+  diff: string;         // Relevant diff hunks (empty for repo analysis)
   annotations: {
     whatChanged: string;
     whyItMatters: string;
@@ -276,30 +345,57 @@ interface FileChange {
 }
 ```
 
-### `POST /api/analyze-codebase`
-
-For the Code Analysis tab. Sends file contents (not diffs) and requests structural analysis. Same caching pattern.
-
-### `GET /api/repo/validate?path=<path>`
-
-Returns `{ valid: boolean, branch: string, remoteUrl?: string }`.
-
-### `GET /api/repo/commits?path=<path>&count=10`
-
-Returns `{ commits: { hash: string, message: string, author: string, date: string }[] }`.
-
 ---
 
-## Claude API Integration
+## Claude CLI Integration
 
-### Semantic Grouping Prompt
+### Authentication
 
-System prompt for the grouping call:
+Uses the `claude` CLI subprocess which authenticates via the user's existing Claude Code subscription. No API key needed.
+
+```typescript
+import { spawn } from "child_process";
+
+function queryClaudeJson(systemPrompt: string, userMessage: string): Promise<{groups: ...}> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "claude",
+      ["-p", "--debug", "--system-prompt", systemPrompt],
+      {
+        env: { ...process.env, CLAUDECODE: "" },  // bypass nested session detection
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
+
+    let stdout = "";
+    proc.stdout.on("data", (data) => { stdout += data.toString(); });
+    proc.stderr.on("data", (data) => { /* debug logs streamed to console */ });
+
+    proc.on("close", (code) => {
+      if (code !== 0) reject(new Error(`claude exited with code ${code}`));
+      // Parse JSON from response (with fallback extraction)
+      resolve(parseJsonResponse(stdout));
+    });
+
+    // Send prompt via stdin (handles large inputs)
+    proc.stdin.write(userMessage);
+    proc.stdin.end();
+  });
+}
+```
+
+**Key details:**
+- `-p` flag: pipe mode (non-interactive, stdin→stdout)
+- `CLAUDECODE: ""`: env var to prevent "nested session" errors
+- `--debug`: streams verbose logs to stderr for visibility
+- stdin piping: avoids shell argument length limits for large prompts
+- Robust JSON extraction: strips markdown fences, tries direct parse, falls back to brace-matching extraction
+
+### Semantic Grouping Prompt (Diff Analysis)
 
 ```
-You are a semantic diff analyzer. You receive a git diff and group the changes
-by PURPOSE — not by file. A single file may appear in multiple groups if
-different hunks serve different purposes.
+You are a semantic diff analyzer that outputs ONLY valid JSON.
+You receive a git diff and group the changes by PURPOSE — not by file.
 
 Rules:
 - Group titles: imperative tense, under 60 characters
@@ -307,62 +403,27 @@ Rules:
 - Always include an "All changes" group at the end listing every file
 - For very large diffs (50+ files), limit to 8 purpose groups + "All changes"
 - Merge minor/trivial groups together
-- For each file in each group, provide three annotations:
-  1. What changed — factual summary of modifications
-  2. Why it matters — purpose and impact
-  3. Review hint — what reviewers should watch for
+- For each file in each group, provide three annotations
 
-Respond in JSON matching this exact schema:
-{
-  "groups": [
-    {
-      "title": "Fix timezone bug in date formatter",
-      "summary": "Replaces naive timezone offset with timezone-aware helper",
-      "category": "bug-fix",
-      "significance": 9,
-      "files": [
-        {
-          "path": "src/utils/date.ts",
-          "lineRange": "12-18",
-          "description": "Swapped getTimezoneOffset for tz-aware helper",
-          "annotations": {
-            "whatChanged": "...",
-            "whyItMatters": "...",
-            "reviewHint": "..."
-          }
-        }
-      ]
-    }
-  ]
-}
+OUTPUT FORMAT: Respond with ONLY a JSON object. No explanations, no markdown.
+Start your response with { and end with }.
 ```
 
-### Model Selection
+### Architecture Prompt (Repo Analysis)
 
-- Default: `claude-sonnet-4-6` (fast, cost-effective for most diffs)
-- Deep analysis toggle: `claude-opus-4-6` (for complex or large changes)
-
-### API Call
-
-```typescript
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({ apiKey });
-
-const response = await client.messages.create({
-  model: "claude-sonnet-4-6",
-  max_tokens: 8192,
-  system: SEMANTIC_GROUPING_SYSTEM_PROMPT,
-  messages: [
-    {
-      role: "user",
-      content: `Analyze the following git diff and group changes by semantic purpose.\n\n<diff>\n${diff}\n</diff>`,
-    },
-  ],
-});
 ```
+You are a repository architecture analyzer that outputs ONLY valid JSON.
+You receive a repository snapshot and group files by their architectural role.
 
-For diffs exceeding **100KB**, split into chunks by file, analyze in parallel, then merge groups.
+Rules:
+- The FIRST group MUST be "Architecture" — overall project structure and design
+- Additional groups: Core Features, Data Layer, UI/Components, Configuration, etc.
+- Only create groups relevant to this specific repo
+- Limit to 6-8 groups total, ordered by architectural significance
+
+OUTPUT FORMAT: Respond with ONLY a JSON object. No explanations, no markdown.
+Start your response with { and end with }.
+```
 
 ---
 
@@ -374,22 +435,15 @@ import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 export const analysisCache = sqliteTable("analysis_cache", {
   id: text("id").primaryKey(),
   repoPath: text("repo_path").notNull(),
-  diffHash: text("diff_hash").notNull(),     // SHA-256 of raw diff
+  diffHash: text("diff_hash").notNull(),     // SHA-256 of content
   scope: text("scope").notNull(),
   result: text("result").notNull(),          // JSON stringified FeatureGroup[]
   rawDiff: text("raw_diff").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
-
-export const reviewState = sqliteTable("review_state", {
-  id: text("id").primaryKey(),
-  analysisId: text("analysis_id").notNull().references(() => analysisCache.id),
-  reviewedFiles: text("reviewed_files").notNull(),  // JSON array of file paths
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
-});
 ```
 
-Cache key: SHA-256 hash of raw diff content. Same diff for same repo → return cached result.
+Cache key: SHA-256 hash of content (diff text or repo snapshot). Same content → return cached result.
 
 ---
 
@@ -398,37 +452,46 @@ Cache key: SHA-256 hash of raw diff content. Same diff for same repo → return 
 ```
 <App>
   <TopBar>
-    <RepoPathInput />          // With ✓/✗ validation indicator
-    <ApiKeyInput />            // Masked, stored in localStorage
-    <SettingsButton />         // Dark mode toggle, clear cache, etc.
+    <RepoPathInput />          // With ✓/✗ validation indicator + branch name
   </TopBar>
   <TabBar>
+    <Tab label="Code Analysis" />    // Default tab
     <Tab label="Git Changes" />
     <Tab label="Commit Analysis" />
-    <Tab label="Code Analysis" />
   </TabBar>
   <ScopeSelector />            // Changes per active tab
-  <AnalyzeButton />            // With loading spinner
-  <ThreeColumnLayout>
-    <LeftColumn>
-      <ReviewProgress />       // "3/7 files reviewed"
-      <FeatureGroupList>
-        <FeatureGroupCard />   // Collapsible, checkboxes
-      </FeatureGroupList>
-    </LeftColumn>
-    <ColumnResizer />
-    <MiddleColumn>
-      <SearchBar />            // Spans middle + right
-      <DiffView />             // Or SourceView for Code Analysis
-    </MiddleColumn>
-    <ColumnResizer />
-    <RightColumn>
-      <ScrollSyncToggle />     // Lock icon
-      <AnnotationList>
-        <AnnotationCard />     // What changed / Why / Review hint
-      </AnnotationList>
-    </RightColumn>
-  </ThreeColumnLayout>
+  <StatusMessages />           // Error, info, cache indicators
+
+  {/* Conditional layout based on active tab */}
+  {isCodeAnalysis ? (
+    <TwoColumnLayout>
+      <LeftColumn>
+        <ReviewProgress />       // "12 files analyzed"
+        <FeatureGroupCard />     // Architecture groups
+      </LeftColumn>
+      <RightColumn>
+        <SearchBar />
+        <RepoFileCard />         // Side-by-side file annotations
+      </RightColumn>
+    </TwoColumnLayout>
+  ) : (
+    <ThreeColumnLayout>
+      <LeftColumn>
+        <ReviewProgress />       // "3/7 files reviewed"
+        <FeatureGroupCard />     // Semantic purpose groups
+      </LeftColumn>
+      <ColumnResizer />
+      <MiddleColumn>
+        <SearchBar />
+        <DiffView />
+      </MiddleColumn>
+      <ColumnResizer />
+      <RightColumn>
+        <ScrollSyncToggle />
+        <AnnotationCard />       // What changed / Why / Review hint
+      </RightColumn>
+    </ThreeColumnLayout>
+  )}
 </App>
 ```
 
@@ -440,29 +503,30 @@ Cache key: SHA-256 hash of raw diff content. Same diff for same repo → return 
 src/
 ├── app/
 │   ├── layout.tsx
-│   ├── page.tsx                        // Main SPA
+│   ├── page.tsx                        // Main SPA (conditional layout)
 │   ├── globals.css
 │   └── api/
 │       ├── analyze/route.ts            // POST — diff analysis
-│       ├── analyze-codebase/route.ts   // POST — code analysis
+│       ├── analyze-repo/route.ts       // POST — repo architecture analysis
 │       └── repo/
 │           ├── validate/route.ts       // GET — validate git repo
 │           └── commits/route.ts        // GET — recent commits
 ├── components/
-│   ├── TopBar.tsx
-│   ├── TabBar.tsx
+│   ├── TopBar.tsx                      // Repo path + branch display
+│   ├── TabBar.tsx                      // Code Analysis | Git Changes | Commit Analysis
 │   ├── ScopeSelector.tsx
-│   ├── ThreeColumnLayout.tsx
-│   ├── FeatureGroupCard.tsx
-│   ├── DiffView.tsx
-│   ├── AnnotationCard.tsx
+│   ├── ThreeColumnLayout.tsx           // Resizable three-column (diff tabs)
+│   ├── FeatureGroupCard.tsx            // Group card with category colors
+│   ├── DiffView.tsx                    // Syntax-highlighted diff
+│   ├── AnnotationCard.tsx              // Three-part annotation (diff tabs)
+│   ├── RepoFileCard.tsx                // Side-by-side file card (code analysis)
 │   ├── SearchBar.tsx
-│   ├── ColumnResizer.tsx
 │   └── ScrollSyncToggle.tsx
 ├── lib/
 │   ├── git.ts                          // Git command helpers (execFile)
-│   ├── claude.ts                       // Anthropic SDK wrapper
+│   ├── claude.ts                       // Claude CLI subprocess wrapper
 │   ├── cache.ts                        // SQLite cache operations
+│   ├── repo-scanner.ts                 // Repository snapshot scanner
 │   └── diff-parser.ts                  // Parse unified diff → structured format
 ├── db/
 │   ├── schema.ts                       // Drizzle schema
@@ -470,48 +534,41 @@ src/
 ├── types/
 │   └── index.ts                        // Shared TypeScript interfaces
 └── hooks/
-    ├── useScrollSync.ts
-    ├── useResizableColumns.ts
-    └── useAnalysis.ts                  // Data fetching hook for analysis
+    ├── useScrollSync.ts                // Middle ↔ right column sync
+    ├── useResizableColumns.ts          // Draggable column dividers
+    └── useAnalysis.ts                  // Data fetching + per-tab result caching
 ```
 
 ---
 
 ## Security
 
-- **API key:** Never log or persist server-side. Passed per-request from the client (stored in localStorage). Shown masked in the UI.
+- **Authentication:** No API key in the app. Uses Claude Code subscription auth via CLI subprocess.
 - **Git commands:** Always use `execFile` (not `exec`) to prevent shell injection. Validate `repoPath` is an absolute path that exists and contains `.git` before running any commands.
 - **Input sanitization:** Commit refs are validated against `^[a-zA-Z0-9._/~^-]+$` before use in git commands.
+- **Nested session prevention:** `CLAUDECODE: ""` env var prevents Claude CLI from detecting nested sessions.
 
 ---
 
 ## UX Details
 
-- **Dark mode:** System-preference detection via Tailwind `dark:` variants. Manual toggle in settings. Shiki themes: `github-dark` / `github-light`.
-- **Loading states:** Skeleton/shimmer in the right column while Claude analyzes. Progress bar on the Analyze button.
-- **Empty states:** Friendly messages for no changes, no repo, invalid key.
-- **Error handling:** Toast notifications for API errors with retry button. Don't clear previous results on error.
-- **Large diff warning:** If diff exceeds 50 files, show confirmation: "Large diff detected (N files). Analysis may take longer and cost more."
-- **Responsive:** Below 768px, the three-column layout collapses to a tabbed single-column view.
-- **Keyboard navigation:** All interactive elements accessible via keyboard. ARIA labels on custom components.
-- **Persist column widths** in localStorage.
+- **Dark mode:** System-preference detection via Tailwind `dark:` variants.
+- **Loading states:** Skeleton/shimmer placeholders while Claude analyzes. Separate loading in left column and content area.
+- **Empty states:** Friendly messages for no analysis, no repo path.
+- **Error handling:** Error bar with retry button. Don't clear previous results on error.
+- **Cached results:** Blue banner showing "Cached result from [timestamp]".
+- **Tab switching:** Instant — cached results restore without re-fetching. Running analyses continue in background.
+- **Persist column widths** in localStorage (deferred read via useEffect to avoid SSR hydration mismatch).
 
 ---
 
 ## Getting Started
 
 ```bash
-npx create-next-app@latest code-review --typescript --tailwind --app --src-dir
-cd code-review
-npm install @anthropic-ai/sdk drizzle-orm better-sqlite3 shiki
-npm install -D drizzle-kit @types/better-sqlite3
+npm install
+npm run dev
 ```
 
-Then implement the file structure above, starting with:
-1. Database schema and connection (`db/`)
-2. Git command helpers (`lib/git.ts`)
-3. API routes (`app/api/`)
-4. Core UI layout (`components/ThreeColumnLayout.tsx`, `ColumnResizer.tsx`)
-5. Feature group cards and diff view
-6. Claude integration and annotation rendering
-7. Search, scroll sync, and polish
+Open http://localhost:3000, enter a local git repo path, then click **Analyze**.
+
+Requires Claude Code to be installed and logged in (`claude` CLI available in PATH).

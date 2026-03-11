@@ -1,8 +1,21 @@
 # Code Review
 
-AI-powered semantic code review tool. Groups git diffs by purpose and provides annotated analysis using Claude.
+AI-powered semantic code review tool. Groups git diffs by purpose and provides annotated analysis using Claude. Includes full repository architecture analysis.
 
 ## What It Does
+
+### Code Analysis (Default Tab)
+
+Scans the entire repository and uses Claude to:
+
+1. **Group files by architectural role** — Core Features, Data Layer, UI/Components, API/Routes, Configuration, Utilities, etc.
+2. **Lead with Architecture** — the first group is always an architecture overview of project structure and design decisions
+3. **Annotate each file** with three-part analysis:
+   - **Purpose** — what the file does
+   - **Significance** — why it matters in the architecture
+   - **Key Notes** — important details for reviewers
+
+### Diff Analysis (Git Changes / Commit Analysis Tabs)
 
 Instead of reviewing diffs file-by-file, this tool uses Claude to:
 
@@ -15,8 +28,11 @@ Instead of reviewing diffs file-by-file, this tool uses Claude to:
 
 ## Layout
 
-Three-column interface with resizable panels:
+**Code Analysis** — Two-column layout:
+- **Left** — Semantic architecture groups (Architecture first, then features)
+- **Right** — File cards with side-by-side annotations (Purpose + Significance | Key Notes)
 
+**Git Changes / Commit Analysis** — Three-column layout with resizable panels:
 - **Left** — Semantic feature groups with review progress checkboxes
 - **Middle** — Syntax-highlighted unified diff view
 - **Right** — AI annotations aligned to corresponding code
@@ -39,13 +55,15 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000, enter a local git repo path and your [Anthropic API key](https://console.anthropic.com/), then click **Analyze**.
+Open http://localhost:3000, enter a local git repo path, then click **Analyze**.
+
+**Authentication:** Uses the logged-in Claude Code subscription — no API key needed. The backend spawns the `claude` CLI subprocess which authenticates via your existing Claude Code session.
 
 ## Stack
 
 - Next.js 14+ (App Router) / TypeScript / Tailwind CSS
 - SQLite via Drizzle ORM + better-sqlite3
-- Anthropic SDK for Claude integration
+- Claude CLI subprocess (`claude -p`) for AI integration (uses Claude Code subscription auth)
 
 ## CLI Plugin
 
