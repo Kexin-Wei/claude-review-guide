@@ -154,15 +154,15 @@ export default function ScopeSelector({
       )}
 
       {activeTab === "code-analysis" && (
-        <span className="text-xs text-zinc-400 italic">
-          Code analysis coming soon
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          Analyze full repository architecture and features
         </span>
       )}
 
       <div className="ml-auto">
         <button
           onClick={onAnalyze}
-          disabled={loading || activeTab === "code-analysis"}
+          disabled={loading}
           className="px-4 py-1.5 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
         >
           {loading && (

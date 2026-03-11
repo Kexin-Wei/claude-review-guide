@@ -11,18 +11,18 @@ interface ColumnWidths {
 }
 
 const STORAGE_KEY = "code-review-column-widths";
-
-function loadWidths(): ColumnWidths {
-  if (typeof window === "undefined") return { left: 25, middle: 40, right: 35 };
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch {}
-  return { left: 25, middle: 40, right: 35 };
-}
+const DEFAULT_WIDTHS: ColumnWidths = { left: 25, middle: 40, right: 35 };
 
 export function useResizableColumns() {
-  const [widths, setWidths] = useState<ColumnWidths>(loadWidths);
+  const [widths, setWidths] = useState<ColumnWidths>(DEFAULT_WIDTHS);
+
+  // Hydrate from localStorage after mount to avoid SSR mismatch
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) setWidths(JSON.parse(stored));
+    } catch {}
+  }, []);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef<"left" | "right" | null>(null);
 

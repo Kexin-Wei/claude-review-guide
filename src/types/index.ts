@@ -25,6 +25,8 @@ export interface AnalysisResult {
   rawDiff: string;
   analyzedAt: string;
   cached: boolean;
+  type: "diff" | "repo";
+  fileTree?: string[];
 }
 
 export interface RepoValidation {
@@ -48,7 +50,10 @@ export interface AnalyzeRequest {
   commitRef?: string;
   fromRef?: string;
   toRef?: string;
-  apiKey: string;
+}
+
+export interface RepoAnalysisRequest {
+  repoPath: string;
 }
 
 export type TabType = "git-changes" | "commit-analysis" | "code-analysis";

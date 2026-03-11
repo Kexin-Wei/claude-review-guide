@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDiff, validateRepo } from "@/lib/git";
 import { analyzeDiff } from "@/lib/claude";
-import { hashDiff, getCachedAnalysis, saveAnalysis } from "@/lib/cache";
+import { hashContent, getCachedAnalysis, saveAnalysis } from "@/lib/cache";
 import type { AnalyzeRequest } from "@/types";
 
 export async function POST(request: NextRequest) {
@@ -12,11 +12,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { repoPath, scope, commitRef, fromRef, toRef, apiKey } = body;
+  const { repoPath, scope, commitRef, fromRef, toRef } = body;
 
-  if (!repoPath || !scope || !apiKey) {
+  if (!repoPath || !scope) {
     return NextResponse.json(
-      { error: "repoPath, scope, and apiKey are required" },
+      { error: "repoPath and scope are required" },
       { status: 400 }
     );
   }
@@ -41,12 +41,13 @@ export async function POST(request: NextRequest) {
         rawDiff: "",
         analyzedAt: new Date().toISOString(),
         cached: false,
+        type: "diff",
         message: "No changes found",
       });
     }
 
     // Check cache
-    const diffHash = hashDiff(diff);
+    const diffHash = hashContent(diff);
     const cached = await getCachedAnalysis(diffHash);
 
     if (cached) {
@@ -56,11 +57,12 @@ export async function POST(request: NextRequest) {
         rawDiff: cached.rawDiff,
         analyzedAt: cached.createdAt.toISOString(),
         cached: true,
+        type: "diff",
       });
     }
 
     // Analyze with Claude
-    const groups = await analyzeDiff(diff, apiKey);
+    const groups = await analyzeDiff(diff);
 
     // Save to cache
     const id = await saveAnalysis(repoPath, diffHash, scope, groups, diff);
@@ -71,6 +73,7 @@ export async function POST(request: NextRequest) {
       rawDiff: diff,
       analyzedAt: new Date().toISOString(),
       cached: false,
+      type: "diff",
     });
   } catch (error) {
     console.error("Analysis error:", error);

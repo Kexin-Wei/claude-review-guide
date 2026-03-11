@@ -8,9 +8,9 @@ interface TabBarProps {
 }
 
 const TABS: { id: TabType; label: string }[] = [
+  { id: "code-analysis", label: "Code Analysis" },
   { id: "git-changes", label: "Git Changes" },
   { id: "commit-analysis", label: "Commit Analysis" },
-  { id: "code-analysis", label: "Code Analysis" },
 ];
 
 export default function TabBar({ activeTab, onTabChange }: TabBarProps) {

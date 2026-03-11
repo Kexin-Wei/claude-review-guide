@@ -7,8 +7,6 @@ interface TopBarProps {
   onRepoPathChange: (path: string) => void;
   repoValid: boolean | null;
   repoBranch: string;
-  apiKey: string;
-  onApiKeyChange: (key: string) => void;
 }
 
 export default function TopBar({
@@ -16,10 +14,7 @@ export default function TopBar({
   onRepoPathChange,
   repoValid,
   repoBranch,
-  apiKey,
-  onApiKeyChange,
 }: TopBarProps) {
-  const [showKey, setShowKey] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
@@ -69,27 +64,6 @@ export default function TopBar({
         {repoValid && repoBranch && (
           <span className="text-xs text-zinc-400 font-mono">{repoBranch}</span>
         )}
-      </div>
-
-      <div className="flex items-center gap-2">
-        <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
-          API Key
-        </label>
-        <div className="relative">
-          <input
-            type={showKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => onApiKeyChange(e.target.value)}
-            placeholder="sk-ant-..."
-            className="w-48 px-3 py-1.5 text-sm rounded-md border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={() => setShowKey(!showKey)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-zinc-600"
-          >
-            {showKey ? "Hide" : "Show"}
-          </button>
-        </div>
       </div>
 
       <button

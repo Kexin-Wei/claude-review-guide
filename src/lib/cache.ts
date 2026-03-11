@@ -5,8 +5,8 @@ import { analysisCache } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import type { FeatureGroup } from "@/types";
 
-export function hashDiff(diff: string): string {
-  return createHash("sha256").update(diff).digest("hex");
+export function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 export async function getCachedAnalysis(

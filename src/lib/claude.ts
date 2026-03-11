@@ -1,8 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "child_process";
 import type { FeatureGroup } from "@/types";
+import type { RepoSnapshot } from "@/lib/repo-scanner";
 import { v4 as uuidv4 } from "uuid";
 
-const SEMANTIC_GROUPING_SYSTEM_PROMPT = `You are a semantic diff analyzer. You receive a git diff and group the changes by PURPOSE — not by file. A single file may appear in multiple groups if different hunks serve different purposes.
+const DIFF_SYSTEM_PROMPT = `You are a semantic diff analyzer that outputs ONLY valid JSON. You receive a git diff and group the changes by PURPOSE — not by file.
 
 Rules:
 - Group titles: imperative tense, under 60 characters
@@ -10,43 +11,152 @@ Rules:
 - Always include an "All changes" group at the end listing every file
 - For very large diffs (50+ files), limit to 8 purpose groups + "All changes"
 - Merge minor/trivial groups together
-- For each file in each group, provide three annotations:
-  1. What changed — factual summary of modifications
-  2. Why it matters — purpose and impact
-  3. Review hint — what reviewers should watch for
+- For each file in each group, provide three annotations
 
-Respond ONLY with valid JSON matching this exact schema (no markdown fences, no commentary):
-{
-  "groups": [
-    {
-      "title": "Fix timezone bug in date formatter",
-      "summary": "Replaces naive timezone offset with timezone-aware helper",
-      "category": "bug-fix",
-      "significance": 9,
-      "files": [
-        {
-          "path": "src/utils/date.ts",
-          "lineRange": "12-18",
-          "description": "Swapped getTimezoneOffset for tz-aware helper",
-          "annotations": {
-            "whatChanged": "...",
-            "whyItMatters": "...",
-            "reviewHint": "..."
+OUTPUT FORMAT: You must respond with ONLY a JSON object. No explanations, no markdown, no text before or after. Start your response with { and end with }.
+
+JSON schema:
+{"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","lineRange":"string","description":"string","annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
+
+const REPO_SYSTEM_PROMPT = `You are a repository architecture analyzer that outputs ONLY valid JSON. You receive a repository snapshot and group files by their architectural role.
+
+Rules:
+- The FIRST group MUST be "Architecture" — overall project structure and design decisions
+- Additional groups: Core Features, Data Layer, UI/Components, Configuration, API/Routes, Utilities, etc.
+- Only create groups relevant to this specific repo
+- Limit to 6-8 groups total, ordered by architectural significance
+- For each file provide: whatChanged (purpose), whyItMatters (significance), reviewHint (key notes)
+- Include only the most important files in each group
+
+OUTPUT FORMAT: You must respond with ONLY a JSON object. No explanations, no markdown, no text before or after. Start your response with { and end with }.
+
+JSON schema:
+{"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","description":"string","annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
+
+function queryClaudeJson(
+  systemPrompt: string,
+  userMessage: string
+): Promise<{ groups: Omit<FeatureGroup, "id">[] }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "claude",
+      ["-p", "--debug", "--system-prompt", systemPrompt],
+      {
+        env: { ...process.env, CLAUDECODE: "" },
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data: Buffer) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      // Stream stdout chunks to console in real-time
+      process.stdout.write(`[claude:out] ${chunk.slice(0, 200)}\n`);
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      // Stream stderr (verbose logs) to console in real-time
+      process.stderr.write(`[claude:log] ${chunk}`);
+    });
+
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to spawn claude: ${err.message}`));
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(`claude exited with code ${code}: ${stderr.slice(0, 500)}`)
+        );
+        return;
+      }
+
+      const result = stdout.trim();
+      if (!result) {
+        reject(new Error("No response from Claude CLI"));
+        return;
+      }
+
+      // Parse JSON from response — handle various formats
+      try {
+        // 1. Strip markdown fences
+        let text = result;
+        const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+        if (fenceMatch) {
+          text = fenceMatch[1];
+        }
+
+        // 2. Try direct parse
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.groups) {
+            resolve(parsed);
+            return;
+          }
+        } catch {
+          // continue to extraction
+        }
+
+        // 3. Extract JSON object containing "groups" array
+        const jsonStart = text.indexOf('{"groups"');
+        if (jsonStart === -1) {
+          // Try finding any { that precedes "groups"
+          const altMatch = text.match(
+            /\{\s*\n?\s*"groups"\s*:\s*\[[\s\S]*\}\s*\]\s*\}/
+          );
+          if (altMatch) {
+            resolve(JSON.parse(altMatch[0]));
+            return;
+          }
+          reject(
+            new Error(
+              `No JSON with "groups" found in response: ${text.slice(0, 200)}`
+            )
+          );
+          return;
+        }
+
+        // Find matching closing brace by counting braces
+        let depth = 0;
+        let jsonEnd = -1;
+        for (let i = jsonStart; i < text.length; i++) {
+          if (text[i] === "{") depth++;
+          else if (text[i] === "}") {
+            depth--;
+            if (depth === 0) {
+              jsonEnd = i + 1;
+              break;
+            }
           }
         }
-      ]
-    }
-  ]
-}`;
 
-export async function analyzeDiff(
-  diff: string,
-  apiKey: string,
-  model: string = "claude-sonnet-4-6"
-): Promise<FeatureGroup[]> {
-  const client = new Anthropic({ apiKey });
+        if (jsonEnd === -1) {
+          reject(new Error("Unterminated JSON object in response"));
+          return;
+        }
 
-  // For very large diffs, truncate with a warning
+        resolve(JSON.parse(text.slice(jsonStart, jsonEnd)));
+      } catch (err) {
+        reject(
+          new Error(
+            `JSON parse error: ${err instanceof Error ? err.message : err} | response: ${result.slice(0, 300)}`
+          )
+        );
+      }
+    });
+
+    // Send prompt via stdin (handles large inputs)
+    proc.stdin.write(userMessage);
+    proc.stdin.end();
+  });
+}
+
+export async function analyzeDiff(diff: string): Promise<FeatureGroup[]> {
   const maxDiffSize = 100_000;
   let truncated = false;
   let processedDiff = diff;
@@ -56,42 +166,60 @@ export async function analyzeDiff(
   }
 
   const userMessage = truncated
-    ? `Analyze the following git diff and group changes by semantic purpose. NOTE: This diff was truncated at ${maxDiffSize} characters — some files may be missing.\n\n<diff>\n${processedDiff}\n</diff>`
-    : `Analyze the following git diff and group changes by semantic purpose.\n\n<diff>\n${processedDiff}\n</diff>`;
+    ? `Analyze this git diff. NOTE: Truncated at ${maxDiffSize} chars.\n\n<diff>\n${processedDiff}\n</diff>\n\nRespond with ONLY the JSON object.`
+    : `Analyze this git diff.\n\n<diff>\n${processedDiff}\n</diff>\n\nRespond with ONLY the JSON object.`;
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 8192,
-    system: SEMANTIC_GROUPING_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
-  });
+  const parsed = await queryClaudeJson(DIFF_SYSTEM_PROMPT, userMessage);
 
-  const textContent = response.content.find((c) => c.type === "text");
-  if (!textContent || textContent.type !== "text") {
-    throw new Error("No text response from Claude");
+  return parsed.groups.map((group) => ({
+    ...group,
+    id: uuidv4(),
+    files: group.files.map((file) => ({
+      ...file,
+      diff: extractFileDiff(diff, file.path),
+    })),
+  }));
+}
+
+export async function analyzeRepo(
+  snapshot: RepoSnapshot
+): Promise<FeatureGroup[]> {
+  const fileTreeSection = snapshot.fileTree.join("\n");
+
+  const keyFilesSection = snapshot.keyFiles
+    .map((f) => `--- ${f.path} ---\n${f.content}`)
+    .join("\n\n");
+
+  const sourceFilesSection = snapshot.sourceFiles
+    .map((f) => `--- ${f.path} ---\n${f.content}`)
+    .join("\n\n");
+
+  const statsSection = `Total files: ${snapshot.stats.totalFiles}\nFile types: ${Object.entries(
+    snapshot.stats.fileTypes
+  )
+    .sort(([, a], [, b]) => b - a)
+    .map(([ext, count]) => `${ext}: ${count}`)
+    .join(", ")}`;
+
+  let userMessage = `Analyze this repository architecture.\n\n<stats>\n${statsSection}\n</stats>\n\n<file-tree>\n${fileTreeSection}\n</file-tree>\n\n<config-files>\n${keyFilesSection}\n</config-files>\n\n<source-samples>\n${sourceFilesSection}\n</source-samples>\n\nRespond with ONLY the JSON object.`;
+
+  const maxSize = 150_000;
+  if (userMessage.length > maxSize) {
+    userMessage =
+      userMessage.slice(0, maxSize) +
+      "\n\n[TRUNCATED]\n\nRespond with ONLY the JSON object.";
   }
 
-  // Parse JSON, stripping any markdown fences if present
-  let jsonText = textContent.text.trim();
-  if (jsonText.startsWith("```")) {
-    jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-  }
+  const parsed = await queryClaudeJson(REPO_SYSTEM_PROMPT, userMessage);
 
-  const parsed = JSON.parse(jsonText);
-
-  // Add UUIDs and diff content to each group
-  const groups: FeatureGroup[] = parsed.groups.map(
-    (group: Omit<FeatureGroup, "id">) => ({
-      ...group,
-      id: uuidv4(),
-      files: group.files.map((file) => ({
-        ...file,
-        diff: extractFileDiff(diff, file.path),
-      })),
-    })
-  );
-
-  return groups;
+  return parsed.groups.map((group) => ({
+    ...group,
+    id: uuidv4(),
+    files: group.files.map((file) => ({
+      ...file,
+      diff: "",
+    })),
+  }));
 }
 
 function extractFileDiff(fullDiff: string, filePath: string): string {

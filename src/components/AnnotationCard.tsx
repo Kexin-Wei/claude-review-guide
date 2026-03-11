@@ -5,6 +5,7 @@ import type { FileChange } from "@/types";
 interface AnnotationCardProps {
   file: FileChange;
   searchQuery?: string;
+  mode?: "diff" | "repo";
 }
 
 function highlightSearch(text: string, query: string | undefined): React.ReactNode {
@@ -29,7 +30,11 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export default function AnnotationCard({ file, searchQuery }: AnnotationCardProps) {
+export default function AnnotationCard({ file, searchQuery, mode = "diff" }: AnnotationCardProps) {
+  const labels = mode === "repo"
+    ? { first: "Purpose", second: "Significance", third: "Key notes" }
+    : { first: "What changed", second: "Why it matters", third: "Review hint" };
+
   return (
     <div
       data-file-id={file.path}
@@ -45,7 +50,7 @@ export default function AnnotationCard({ file, searchQuery }: AnnotationCardProp
           <div className="flex items-center gap-1.5 mb-1">
             <span className="text-blue-500">&#10022;</span>
             <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              What changed
+              {labels.first}
             </span>
           </div>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed pl-5">
@@ -57,7 +62,7 @@ export default function AnnotationCard({ file, searchQuery }: AnnotationCardProp
           <div className="flex items-center gap-1.5 mb-1">
             <span className="text-amber-500">&#10022;</span>
             <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              Why it matters
+              {labels.second}
             </span>
           </div>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed pl-5">
@@ -69,7 +74,7 @@ export default function AnnotationCard({ file, searchQuery }: AnnotationCardProp
           <div className="flex items-center gap-1.5 mb-1">
             <span className="text-emerald-500">&#10022;</span>
             <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              Review hint
+              {labels.third}
             </span>
           </div>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed pl-5">
