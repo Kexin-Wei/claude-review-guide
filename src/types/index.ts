@@ -1,3 +1,11 @@
+export interface CodeBlock {
+  name: string;
+  type: "function" | "class" | "hook" | "component" | "method" | "constant" | "type" | "interface" | "module";
+  lineStart: number;
+  lineEnd: number;
+  description: string;
+}
+
 export interface FeatureGroup {
   id: string;
   title: string;
@@ -12,11 +20,21 @@ export interface FileChange {
   lineRange?: string;
   description: string;
   diff: string;
+  blocks?: CodeBlock[];
   annotations: {
     whatChanged: string;
     whyItMatters: string;
     reviewHint: string;
   };
+}
+
+export interface UmlModule {
+  name: string;
+  description: string;
+  type: "layer" | "module" | "service" | "component";
+  files: string[];
+  exports: string[];
+  dependsOn: string[];
 }
 
 export interface AnalysisResult {
@@ -27,6 +45,7 @@ export interface AnalysisResult {
   cached: boolean;
   type: "diff" | "repo";
   fileTree?: string[];
+  umlStructure?: UmlModule[];
 }
 
 export interface RepoValidation {

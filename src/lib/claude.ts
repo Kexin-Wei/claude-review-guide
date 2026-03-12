@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import type { FeatureGroup } from "@/types";
+import type { FeatureGroup, UmlModule } from "@/types";
 import type { RepoSnapshot } from "@/lib/repo-scanner";
 import { v4 as uuidv4 } from "uuid";
 
@@ -11,32 +11,46 @@ Rules:
 - Always include an "All changes" group at the end listing every file
 - For very large diffs (50+ files), limit to 8 purpose groups + "All changes"
 - Merge minor/trivial groups together
-- For each file in each group, provide three annotations
+- For each file, identify the specific code blocks (functions, classes, hooks, components) that were changed — NOT just the file
+- Each file MUST have a "blocks" array listing the specific changed code units with their line ranges
+- If a whole file is new/deleted, list the main exports as blocks
 
 OUTPUT FORMAT: You must respond with ONLY a JSON object. No explanations, no markdown, no text before or after. Start your response with { and end with }.
 
 JSON schema:
-{"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","lineRange":"string","description":"string","annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
+{"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","lineRange":"string","description":"string","blocks":[{"name":"string","type":"function|class|hook|component|method|constant|type|interface|module","lineStart":0,"lineEnd":0,"description":"string"}],"annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
 
-const REPO_SYSTEM_PROMPT = `You are a repository architecture analyzer that outputs ONLY valid JSON. You receive a repository snapshot and group files by their architectural role.
+const REPO_SYSTEM_PROMPT = `You are a repository architecture analyzer that outputs ONLY valid JSON. You receive a repository snapshot and produce TWO things:
+
+1. "umlStructure": A high-level module/layer diagram of the codebase infrastructure. Each module represents a logical layer or subsystem (e.g., "API Layer", "Data Access", "UI Components", "Business Logic"). Include:
+   - name: short module name
+   - description: what this layer/module does
+   - type: "layer" | "module" | "service" | "component"
+   - files: key file paths belonging to this module
+   - exports: the most important exported functions/classes/components (just names, e.g. "analyzeDiff", "useAnalysis", "DiffView")
+   - dependsOn: names of other modules this depends on
+
+2. "groups": Feature groups based on the modules above. Each group corresponds to a module or cross-cutting feature. For each file:
+   - Identify specific code blocks (functions, classes, hooks, components, types) — NOT just the file
+   - Each file MUST have a "blocks" array listing the key code units with line ranges
+   - Focus on the most important/interesting code blocks, not every tiny helper
 
 Rules:
-- The FIRST group MUST be "Architecture" — overall project structure and design decisions
-- Additional groups: Core Features, Data Layer, UI/Components, Configuration, API/Routes, Utilities, etc.
-- Only create groups relevant to this specific repo
-- Limit to 6-8 groups total, ordered by architectural significance
+- umlStructure: 4-8 modules, ordered by dependency (foundational layers first)
+- groups: 6-8 groups, ordered by architectural significance
+- The FIRST group should be "Architecture" — overall project structure
 - For each file provide: whatChanged (purpose), whyItMatters (significance), reviewHint (key notes)
 - Include only the most important files in each group
 
 OUTPUT FORMAT: You must respond with ONLY a JSON object. No explanations, no markdown, no text before or after. Start your response with { and end with }.
 
 JSON schema:
-{"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","description":"string","annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
+{"umlStructure":[{"name":"string","description":"string","type":"layer|module|service|component","files":["string"],"exports":["string"],"dependsOn":["string"]}],"groups":[{"title":"string","summary":"string","category":"string","significance":0,"files":[{"path":"string","description":"string","blocks":[{"name":"string","type":"function|class|hook|component|method|constant|type|interface|module","lineStart":0,"lineEnd":0,"description":"string"}],"annotations":{"whatChanged":"string","whyItMatters":"string","reviewHint":"string"}}]}]}`;
 
 function queryClaudeJson(
   systemPrompt: string,
   userMessage: string
-): Promise<{ groups: Omit<FeatureGroup, "id">[] }> {
+): Promise<{ groups: Omit<FeatureGroup, "id">[]; umlStructure?: UmlModule[] }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       "claude",
@@ -103,15 +117,23 @@ function queryClaudeJson(
         }
 
         // 3. Extract JSON object containing "groups" array
-        const jsonStart = text.indexOf('{"groups"');
+        let jsonStart = text.indexOf('{"groups"');
+        if (jsonStart === -1) {
+          // Also try finding umlStructure-first format
+          jsonStart = text.indexOf('{"umlStructure"');
+        }
         if (jsonStart === -1) {
           // Try finding any { that precedes "groups"
           const altMatch = text.match(
-            /\{\s*\n?\s*"groups"\s*:\s*\[[\s\S]*\}\s*\]\s*\}/
+            /\{[\s\S]*?"groups"\s*:\s*\[[\s\S]*$/
           );
           if (altMatch) {
-            resolve(JSON.parse(altMatch[0]));
-            return;
+            try {
+              resolve(JSON.parse(altMatch[0]));
+              return;
+            } catch {
+              // fall through
+            }
           }
           reject(
             new Error(
@@ -183,7 +205,7 @@ export async function analyzeDiff(diff: string): Promise<FeatureGroup[]> {
 
 export async function analyzeRepo(
   snapshot: RepoSnapshot
-): Promise<FeatureGroup[]> {
+): Promise<{ groups: FeatureGroup[]; umlStructure: UmlModule[] }> {
   const fileTreeSection = snapshot.fileTree.join("\n");
 
   const keyFilesSection = snapshot.keyFiles
@@ -212,7 +234,7 @@ export async function analyzeRepo(
 
   const parsed = await queryClaudeJson(REPO_SYSTEM_PROMPT, userMessage);
 
-  return parsed.groups.map((group) => ({
+  const groups = parsed.groups.map((group) => ({
     ...group,
     id: uuidv4(),
     files: group.files.map((file) => ({
@@ -220,6 +242,11 @@ export async function analyzeRepo(
       diff: "",
     })),
   }));
+
+  return {
+    groups,
+    umlStructure: parsed.umlStructure || [],
+  };
 }
 
 function extractFileDiff(fullDiff: string, filePath: string): string {

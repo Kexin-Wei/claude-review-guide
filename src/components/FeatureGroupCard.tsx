@@ -3,12 +3,33 @@
 import { useState } from "react";
 import type { FeatureGroup } from "@/types";
 
+// Same palette as the code view highlights — colors assigned per block index
+const BLOCK_PALETTE = [
+  "rgb(59,130,246)",   // blue
+  "rgb(168,85,247)",   // purple
+  "rgb(236,72,153)",   // pink
+  "rgb(14,165,233)",   // sky
+  "rgb(245,158,11)",   // amber
+  "rgb(16,185,129)",   // emerald
+  "rgb(239,68,68)",    // red
+  "rgb(99,102,241)",   // indigo
+  "rgb(34,211,238)",   // cyan
+  "rgb(251,146,60)",   // orange
+  "rgb(163,230,53)",   // lime
+  "rgb(232,121,249)",  // fuchsia
+  "rgb(56,189,248)",   // light blue
+  "rgb(74,222,128)",   // green
+  "rgb(251,191,36)",   // yellow
+  "rgb(244,114,182)",  // rose
+];
+
 interface FeatureGroupCardProps {
   group: FeatureGroup;
   reviewedFiles: Set<string>;
   onToggleFileReview: (groupId: string, filePath: string) => void;
-  onFileClick: (filePath: string) => void;
+  onFileClick: (filePath: string, lineStart?: number, lineEnd?: number) => void;
   onGroupClick: (group: FeatureGroup) => void;
+  showReviewCheckboxes?: boolean;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -42,6 +63,7 @@ export default function FeatureGroupCard({
   onToggleFileReview,
   onFileClick,
   onGroupClick,
+  showReviewCheckboxes = true,
 }: FeatureGroupCardProps) {
   const [expanded, setExpanded] = useState(true);
   const reviewedCount = group.files.filter((f) =>
@@ -84,7 +106,7 @@ export default function FeatureGroupCard({
               </span>
             </div>
           </div>
-          {reviewedCount > 0 && (
+          {showReviewCheckboxes && reviewedCount > 0 && (
             <span className="text-[10px] text-green-600 dark:text-green-400 font-mono">
               {reviewedCount}/{group.files.length}
             </span>
@@ -97,32 +119,63 @@ export default function FeatureGroupCard({
           {group.files.map((file) => {
             const fileKey = `${group.id}:${file.path}`;
             const isReviewed = reviewedFiles.has(fileKey);
+            const hasBlocks = file.blocks && file.blocks.length > 0;
             return (
-              <div
-                key={file.path}
-                className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/30"
-              >
-                <input
-                  type="checkbox"
-                  checked={isReviewed}
-                  onChange={() => onToggleFileReview(group.id, file.path)}
-                  className="h-3 w-3 rounded border-zinc-300 text-green-600 focus:ring-green-500 shrink-0"
-                />
-                <button
-                  onClick={() => onFileClick(file.path)}
-                  className={`text-xs font-mono truncate text-left hover:text-blue-600 dark:hover:text-blue-400 ${
-                    isReviewed
-                      ? "line-through text-zinc-400 dark:text-zinc-500"
-                      : "text-zinc-600 dark:text-zinc-300"
-                  }`}
-                >
-                  {file.path}
-                  {file.lineRange && (
-                    <span className="text-zinc-400 ml-1">
-                      (L{file.lineRange})
-                    </span>
+              <div key={file.path}>
+                <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                  {showReviewCheckboxes && (
+                    <input
+                      type="checkbox"
+                      checked={isReviewed}
+                      onChange={() => onToggleFileReview(group.id, file.path)}
+                      className="h-3 w-3 rounded border-zinc-300 text-green-600 focus:ring-green-500 shrink-0"
+                    />
                   )}
-                </button>
+                  <button
+                    onClick={() => onFileClick(file.path)}
+                    className={`text-xs font-mono truncate text-left hover:text-blue-600 dark:hover:text-blue-400 ${
+                      showReviewCheckboxes && isReviewed
+                        ? "line-through text-zinc-400 dark:text-zinc-500"
+                        : "text-zinc-600 dark:text-zinc-300"
+                    }`}
+                  >
+                    {file.path}
+                    {file.lineRange && (
+                      <span className="text-zinc-400 ml-1">
+                        (L{file.lineRange})
+                      </span>
+                    )}
+                  </button>
+                </div>
+                {/* Code blocks under the file */}
+                {hasBlocks && (
+                  <div className="ml-7 border-l border-zinc-200 dark:border-zinc-700/50">
+                    {file.blocks!.map((block, i) => {
+                      const color = BLOCK_PALETTE[i % BLOCK_PALETTE.length];
+                      return (
+                        <button
+                          key={`${block.name}-${i}`}
+                          onClick={() => onFileClick(file.path, block.lineStart, block.lineEnd)}
+                          className="w-full text-left px-2.5 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 flex items-center gap-1.5 group"
+                          style={{ borderLeft: `3px solid ${color}` }}
+                        >
+                          <span
+                            className="text-[9px] font-medium shrink-0"
+                            style={{ color }}
+                          >
+                            {block.type}
+                          </span>
+                          <span className="text-[11px] font-mono text-zinc-700 dark:text-zinc-300 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                            {block.name}
+                          </span>
+                          <span className="text-[9px] text-zinc-400 shrink-0 ml-auto">
+                            L{block.lineStart}-{block.lineEnd}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

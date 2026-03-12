@@ -108,10 +108,11 @@ export async function POST(request: NextRequest) {
         cached: true,
         type: "repo",
         fileTree: snapshot.fileTree,
+        umlStructure: cached.umlStructure,
       });
     }
 
-    const groups = await analyzeRepo(snapshot);
+    const { groups, umlStructure } = await analyzeRepo(snapshot);
     const groupsWithContent = await attachFileContents(groups, repoPath);
 
     const id = await saveAnalysis(
@@ -119,7 +120,8 @@ export async function POST(request: NextRequest) {
       cacheKey,
       "repo-analysis",
       groups,
-      ""
+      "",
+      umlStructure
     );
 
     return NextResponse.json({
@@ -130,6 +132,7 @@ export async function POST(request: NextRequest) {
       cached: false,
       type: "repo",
       fileTree: snapshot.fileTree,
+      umlStructure,
     });
   } catch (error) {
     console.error("Repo analysis error:", error);

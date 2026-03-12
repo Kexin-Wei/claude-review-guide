@@ -1,23 +1,55 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useMemo } from "react";
 
 import TopBar from "@/components/TopBar";
 import TabBar from "@/components/TabBar";
 import ScopeSelector from "@/components/ScopeSelector";
-import ThreeColumnLayout from "@/components/ThreeColumnLayout";
+import TwoColumnLayout from "@/components/TwoColumnLayout";
 import FeatureGroupCard from "@/components/FeatureGroupCard";
+import UmlDiagram from "@/components/UmlDiagram";
 import DiffView from "@/components/DiffView";
 import AnnotationCard from "@/components/AnnotationCard";
 import RepoFileCard from "@/components/RepoFileCard";
-import FileContentView from "@/components/FileContentView";
 import SearchBar from "@/components/SearchBar";
-import ScrollSyncToggle from "@/components/ScrollSyncToggle";
 import { useAnalysis } from "@/hooks/useAnalysis";
-import { useScrollSync } from "@/hooks/useScrollSync";
 import type { TabType, DiffScope, RepoScope, FeatureGroup, FileChange } from "@/types";
 
 const REPO_PATH_STORAGE = "code-review-repo-path";
+
+// Vibrant color palette for code block highlights — each block gets a unique color
+const BLOCK_COLORS = [
+  { bg: "rgba(59,130,246,0.12)", border: "rgb(59,130,246)" },   // blue
+  { bg: "rgba(168,85,247,0.12)", border: "rgb(168,85,247)" },   // purple
+  { bg: "rgba(236,72,153,0.12)", border: "rgb(236,72,153)" },   // pink
+  { bg: "rgba(14,165,233,0.12)", border: "rgb(14,165,233)" },   // sky
+  { bg: "rgba(245,158,11,0.12)", border: "rgb(245,158,11)" },   // amber
+  { bg: "rgba(16,185,129,0.12)", border: "rgb(16,185,129)" },   // emerald
+  { bg: "rgba(239,68,68,0.12)", border: "rgb(239,68,68)" },     // red
+  { bg: "rgba(99,102,241,0.12)", border: "rgb(99,102,241)" },   // indigo
+  { bg: "rgba(34,211,238,0.12)", border: "rgb(34,211,238)" },   // cyan
+  { bg: "rgba(251,146,60,0.12)", border: "rgb(251,146,60)" },   // orange
+  { bg: "rgba(163,230,53,0.12)", border: "rgb(163,230,53)" },   // lime
+  { bg: "rgba(232,121,249,0.12)", border: "rgb(232,121,249)" }, // fuchsia
+  { bg: "rgba(56,189,248,0.12)", border: "rgb(56,189,248)" },   // light blue
+  { bg: "rgba(74,222,128,0.12)", border: "rgb(74,222,128)" },   // green
+  { bg: "rgba(251,191,36,0.12)", border: "rgb(251,191,36)" },   // yellow
+  { bg: "rgba(244,114,182,0.12)", border: "rgb(244,114,182)" }, // rose
+];
+
+function buildLineColorMap(blocks?: import("@/types").CodeBlock[]): Map<number, { bg: string; border: string }> {
+  const map = new Map<number, { bg: string; border: string }>();
+  if (!blocks) return map;
+  for (let idx = 0; idx < blocks.length; idx++) {
+    const block = blocks[idx];
+    const color = BLOCK_COLORS[idx % BLOCK_COLORS.length];
+    for (let i = block.lineStart; i <= block.lineEnd; i++) {
+      map.set(i, color);
+    }
+  }
+  return map;
+}
 
 export default function Home() {
   // Persistent state
@@ -35,7 +67,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [reviewedFiles, setReviewedFiles] = useState<Set<string>>(new Set());
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const repoContentRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Analysis hook
   const {
@@ -43,17 +75,6 @@ export default function Home() {
     analyze, analyzeRepo,
     showDiffResult, showRepoResult,
   } = useAnalysis();
-
-  // Scroll sync
-  const {
-    middleRef,
-    rightRef,
-    syncEnabled,
-    setSyncEnabled,
-    handleMiddleScroll,
-    handleRightScroll,
-    scrollToFile,
-  } = useScrollSync();
 
   // Load persisted values
   useEffect(() => {
@@ -95,6 +116,12 @@ export default function Home() {
       } else {
         showDiffResult();
       }
+      // Set appropriate default scope for each tab
+      if (tab === "commit-analysis") {
+        setScope("commit");
+      } else if (tab === "git-changes") {
+        setScope("all");
+      }
     },
     [showDiffResult, showRepoResult]
   );
@@ -124,19 +151,63 @@ export default function Home() {
     []
   );
 
+  const scrollToFile = useCallback((fileId: string) => {
+    if (!contentRef.current) return;
+    const el = contentRef.current.querySelector(`[data-file-id="${fileId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
   const handleFileClick = useCallback(
-    (filePath: string) => {
-      // For repo analysis, scroll within the repo content panel
-      if (repoContentRef.current) {
-        const el = repoContentRef.current.querySelector(`[data-file-id="${filePath}"]`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
+    (filePath: string, lineStart?: number, lineEnd?: number) => {
+      if (lineStart && contentRef.current) {
+        const fileEl = contentRef.current.querySelector(`[data-file-id="${filePath}"]`);
+        if (!fileEl) { scrollToFile(filePath); return; }
+
+        const end = lineEnd || lineStart;
+        const highlightClass = ["bg-yellow-100", "dark:bg-yellow-900/30"];
+        const lines: Element[] = [];
+
+        for (let i = lineStart; i <= end; i++) {
+          const el = fileEl.querySelector(`[data-line="${i}"]`);
+          if (el) lines.push(el);
+        }
+
+        if (lines.length > 0) {
+          lines[0].scrollIntoView({ behavior: "smooth", block: "center" });
+          for (const el of lines) {
+            el.classList.add(...highlightClass);
+          }
+          setTimeout(() => {
+            for (const el of lines) {
+              el.classList.remove(...highlightClass);
+            }
+          }, 2000);
           return;
         }
       }
       scrollToFile(filePath);
     },
     [scrollToFile]
+  );
+
+  const handleUmlModuleClick = useCallback(
+    (moduleName: string) => {
+      // Find a group whose title or category matches this module name
+      const group = result?.groups?.find(
+        (g) =>
+          g.title.toLowerCase().includes(moduleName.toLowerCase()) ||
+          g.category.toLowerCase().includes(moduleName.toLowerCase())
+      );
+      if (group) {
+        setSelectedGroup(group.id);
+        if (group.files.length > 0) {
+          scrollToFile(group.files[0].path);
+        }
+      }
+    },
+    [result, scrollToFile]
   );
 
   const handleGroupClick = useCallback(
@@ -155,15 +226,15 @@ export default function Home() {
       ? result.groups.find((g) => g.id === selectedGroup)?.files || []
       : result?.groups?.flatMap((g) => g.files) || [];
 
-  // Build the diff string for the selected view
-  const displayDiff =
-    selectedGroup && result?.groups
-      ? result.groups
-          .find((g) => g.id === selectedGroup)
-          ?.files.map((f) => f.diff)
-          .filter(Boolean)
-          .join("\n") || result.rawDiff
-      : result?.rawDiff || "";
+  // Build the diff string for the selected view (per-file for diff tab)
+  const fileDiffs = useMemo(() => {
+    if (!displayFiles.length) return new Map<string, string>();
+    const map = new Map<string, string>();
+    for (const file of displayFiles) {
+      if (file.diff) map.set(file.path, file.diff);
+    }
+    return map;
+  }, [displayFiles]);
 
   // Count total/reviewed files
   const totalFiles =
@@ -172,14 +243,20 @@ export default function Home() {
 
   const isRepoAnalysis = result?.type === "repo";
 
+  // Check if the selected group is the Architecture group
+  const selectedGroupData = result?.groups?.find((g) => g.id === selectedGroup);
+  const isArchitectureView =
+    activeTab === "code-analysis" &&
+    selectedGroupData?.category?.toLowerCase().includes("architecture");
+
   // Shared left column content
   const leftColumn = (
     <div className="p-3 space-y-3">
       {totalFiles > 0 && (
         <div className="text-xs text-zinc-400 dark:text-zinc-500 font-medium">
-          {isRepoAnalysis
-            ? `${totalFiles} files analyzed`
-            : `${reviewedCount}/${totalFiles} files reviewed`}
+          {activeTab === "git-changes"
+            ? `${reviewedCount}/${totalFiles} files reviewed`
+            : `${totalFiles} files analyzed`}
         </div>
       )}
 
@@ -194,6 +271,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* Feature groups */}
       {result?.groups?.map((group) => (
         <FeatureGroupCard
           key={group.id}
@@ -202,6 +280,7 @@ export default function Home() {
           onToggleFileReview={handleToggleFileReview}
           onFileClick={handleFileClick}
           onGroupClick={handleGroupClick}
+          showReviewCheckboxes={activeTab === "git-changes"}
         />
       ))}
 
@@ -273,146 +352,124 @@ export default function Home() {
         </div>
       )}
 
-      {/* Layout: three-column for both repo and diff analysis */}
-      {isRepoAnalysis || activeTab === "code-analysis" ? (
-        <ThreeColumnLayout
-          left={leftColumn}
-          middle={
-            <div className="flex flex-col h-full">
-              <SearchBar onSearchChange={setSearchQuery} />
-              <div ref={repoContentRef} className="flex-1 overflow-y-auto">
-                {loading && (
-                  <div className="p-4 space-y-4">
-                    {[1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className="h-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse"
-                      />
-                    ))}
-                  </div>
-                )}
+      {/* Unified two-column layout for all tabs */}
+      <TwoColumnLayout
+        sidebar={leftColumn}
+        content={
+          <div className="flex flex-col h-full">
+            <SearchBar onSearchChange={setSearchQuery} />
+            <div ref={contentRef} className="flex-1 overflow-y-auto">
+              {loading && (
+                <div className="p-4 space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex gap-4">
+                      <div className="flex-1 h-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+                      <div className="w-80 shrink-0 h-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              )}
 
-                <FileContentView
-                  files={displayFiles}
-                  searchQuery={searchQuery}
-                />
-
-                {!loading && displayFiles.length === 0 && (
-                  <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
-                    Run a code analysis to see file contents
+              {/* Architecture UML view */}
+              {isArchitectureView && result?.umlStructure && result.umlStructure.length > 0 ? (
+                <div className="p-6">
+                  <UmlDiagram
+                    modules={result.umlStructure}
+                    onModuleClick={handleUmlModuleClick}
+                  />
+                </div>
+              ) : isRepoAnalysis || activeTab === "code-analysis" ? (
+                /* Code Analysis: file content + annotation per row */
+                displayFiles.length > 0 ? (
+                  <div>
+                    {displayFiles.filter((f) => f.diff).map((file, idx) => {
+                      const lines = file.diff.split("\n");
+                      const lineColorMap = buildLineColorMap(file.blocks);
+                      return (
+                        <div
+                          key={`${file.path}-${idx}`}
+                          data-file-id={file.path}
+                          className="flex border-b border-zinc-200 dark:border-zinc-700"
+                        >
+                          {/* Code block */}
+                          <div className="flex-1 min-w-0 overflow-x-auto font-mono text-xs leading-5">
+                            <div className="sticky top-0 z-10 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 font-sans text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                              {file.path}
+                            </div>
+                            {lines.map((line, lineIdx) => {
+                              const lineNum = lineIdx + 1;
+                              const color = lineColorMap.get(lineNum);
+                              return (
+                                <div
+                                  key={lineIdx}
+                                  data-line={lineNum}
+                                  className={`flex transition-colors duration-500 ${!color ? "hover:bg-zinc-50 dark:hover:bg-zinc-800/30" : ""}`}
+                                  style={color ? {
+                                    backgroundColor: color.bg,
+                                    borderLeft: `3px solid ${color.border}`,
+                                  } : undefined}
+                                >
+                                  <span className="w-12 shrink-0 text-right pr-2 text-zinc-400 select-none border-r border-zinc-200 dark:border-zinc-700">
+                                    {lineNum}
+                                  </span>
+                                  <span className="flex-1 px-2 whitespace-pre text-zinc-700 dark:text-zinc-300">
+                                    {line}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* Annotation */}
+                          <div className="w-80 shrink-0 border-l border-zinc-200 dark:border-zinc-700 p-3">
+                            <RepoFileCard file={file} searchQuery={searchQuery} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            </div>
-          }
-          right={
-            <div className="flex flex-col h-full">
-              <div className="flex items-center px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900">
-                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  AI Annotations
-                </span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-4">
-                {loading && (
-                  <div className="space-y-4">
-                    {[1, 2, 3].map((i) => (
+                ) : (
+                  !loading && (
+                    <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
+                      Run a code analysis to see file contents
+                    </div>
+                  )
+                )
+              ) : (
+                /* Diff Analysis: diff + annotation per row */
+                displayFiles.length > 0 ? (
+                  <div>
+                    {displayFiles.map((file, idx) => (
                       <div
-                        key={i}
-                        className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4 space-y-3"
+                        key={`${file.path}-${idx}`}
+                        data-file-id={file.path}
+                        className="flex border-b border-zinc-200 dark:border-zinc-700"
                       >
-                        <div className="h-3 w-24 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
-                        <div className="space-y-2">
-                          <div className="h-2 w-full bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
-                          <div className="h-2 w-3/4 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
+                        {/* Diff block */}
+                        <div className="flex-1 min-w-0 overflow-x-auto">
+                          <DiffView
+                            rawDiff={fileDiffs.get(file.path) || ""}
+                            searchQuery={searchQuery}
+                          />
+                        </div>
+                        {/* Annotation */}
+                        <div className="w-80 shrink-0 border-l border-zinc-200 dark:border-zinc-700 p-3">
+                          <AnnotationCard file={file} searchQuery={searchQuery} />
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
-
-                {displayFiles.map((file, idx) => (
-                  <RepoFileCard
-                    key={`${file.path}-${idx}`}
-                    file={file}
-                    searchQuery={searchQuery}
-                  />
-                ))}
-
-                {!loading && displayFiles.length === 0 && (
-                  <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
-                    Annotations will appear here
-                  </div>
-                )}
-              </div>
+                ) : (
+                  !loading && (
+                    <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
+                      Run an analysis to see diffs here
+                    </div>
+                  )
+                )
+              )}
             </div>
-          }
-        />
-      ) : (
-        <ThreeColumnLayout
-          left={leftColumn}
-          middle={
-            <div className="flex flex-col h-full">
-              <SearchBar onSearchChange={setSearchQuery} />
-              <div
-                className="flex-1 overflow-y-auto"
-                ref={middleRef}
-                onScroll={handleMiddleScroll}
-              >
-                <DiffView rawDiff={displayDiff} searchQuery={searchQuery} />
-              </div>
-            </div>
-          }
-          right={
-            <div className="flex flex-col h-full">
-              <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900">
-                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  AI Annotations
-                </span>
-                <ScrollSyncToggle
-                  enabled={syncEnabled}
-                  onToggle={() => setSyncEnabled(!syncEnabled)}
-                />
-              </div>
-              <div
-                className="flex-1 overflow-y-auto p-3"
-                ref={rightRef}
-                onScroll={handleRightScroll}
-              >
-                {loading && (
-                  <div className="space-y-4">
-                    {[1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4 space-y-3"
-                      >
-                        <div className="h-3 w-24 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
-                        <div className="space-y-2">
-                          <div className="h-2 w-full bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
-                          <div className="h-2 w-3/4 bg-zinc-100 dark:bg-zinc-800 rounded animate-pulse" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {displayFiles.map((file, idx) => (
-                  <AnnotationCard
-                    key={`${file.path}-${idx}`}
-                    file={file}
-                    searchQuery={searchQuery}
-                  />
-                ))}
-
-                {!loading && displayFiles.length === 0 && (
-                  <div className="flex items-center justify-center h-full text-zinc-400 dark:text-zinc-500 text-sm">
-                    Annotations will appear here
-                  </div>
-                )}
-              </div>
-            </div>
-          }
-        />
-      )}
+          </div>
+        }
+      />
     </div>
   );
 }
