@@ -100,58 +100,45 @@ export default function ScopeSelector({
           </div>
 
           {commitMode === "single" ? (
-            <input
-              type="text"
+            <select
               value={commitRef}
               onChange={(e) => onCommitRefChange(e.target.value)}
-              placeholder="Commit ref (e.g. HEAD, abc1234)"
-              className="flex-1 max-w-xs px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-            />
+              className="flex-1 max-w-md px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select a commit...</option>
+              {recentCommits.map((c) => (
+                <option key={c.hash} value={c.hash.slice(0, 8)}>
+                  {c.hash.slice(0, 7)} — {c.message}
+                </option>
+              ))}
+            </select>
           ) : (
             <div className="flex items-center gap-1">
-              <input
-                type="text"
+              <select
                 value={fromRef}
                 onChange={(e) => onFromRefChange(e.target.value)}
-                placeholder="From ref"
-                className="w-32 px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-              />
+                className="w-56 px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">From commit...</option>
+                {recentCommits.map((c) => (
+                  <option key={c.hash} value={c.hash.slice(0, 8)}>
+                    {c.hash.slice(0, 7)} — {c.message}
+                  </option>
+                ))}
+              </select>
               <span className="text-zinc-400">..</span>
-              <input
-                type="text"
+              <select
                 value={toRef}
                 onChange={(e) => onToRefChange(e.target.value)}
-                placeholder="To ref"
-                className="w-32 px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
-              />
-            </div>
-          )}
-
-          {recentCommits.length > 0 && (
-            <div className="relative group">
-              <button className="px-2 py-1 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-600 rounded">
-                Recent
-              </button>
-              <div className="absolute left-0 top-full mt-1 w-80 max-h-48 overflow-y-auto bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-md shadow-lg z-50 hidden group-hover:block">
+                className="w-56 px-2 py-1 text-sm font-mono rounded border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">To commit...</option>
                 {recentCommits.map((c) => (
-                  <button
-                    key={c.hash}
-                    onClick={() => {
-                      onCommitRefChange(c.hash.slice(0, 8));
-                      setCommitMode("single");
-                      onScopeChange("commit");
-                    }}
-                    className="w-full px-3 py-1.5 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-700 flex gap-2"
-                  >
-                    <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">
-                      {c.hash.slice(0, 7)}
-                    </span>
-                    <span className="truncate text-zinc-700 dark:text-zinc-300">
-                      {c.message}
-                    </span>
-                  </button>
+                  <option key={c.hash} value={c.hash.slice(0, 8)}>
+                    {c.hash.slice(0, 7)} — {c.message}
+                  </option>
                 ))}
-              </div>
+              </select>
             </div>
           )}
         </div>
@@ -187,7 +174,28 @@ export default function ScopeSelector({
         </div>
       )}
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        {repoPath && (
+          <button
+            onClick={async () => {
+              const cacheScope = activeTab === "code-analysis"
+                ? "repo-analysis"
+                : activeTab === "commit-analysis"
+                  ? (commitMode === "range" ? "range" : "commit")
+                  : scope;
+              await fetch("/api/cache/clear", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ repoPath, scope: cacheScope }),
+              });
+            }}
+            disabled={loading}
+            title="Clear cached analysis for current view"
+            className="px-2 py-1.5 text-xs rounded-md border border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+          >
+            Clear cache
+          </button>
+        )}
         <button
           onClick={onAnalyze}
           disabled={loading}
