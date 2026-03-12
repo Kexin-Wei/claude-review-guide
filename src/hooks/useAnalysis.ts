@@ -37,6 +37,7 @@ export function useAnalysis(): UseAnalysisReturn {
       setLoading(true);
       setError(null);
       setMessage(null);
+      setResult(null);
 
       try {
         const res = await fetch("/api/analyze", {
@@ -71,6 +72,7 @@ export function useAnalysis(): UseAnalysisReturn {
     setLoading(true);
     setError(null);
     setMessage(null);
+    setResult(null);
 
     try {
       const res = await fetch("/api/analyze-repo", {
