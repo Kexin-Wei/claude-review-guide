@@ -37,6 +37,45 @@ export interface UmlModule {
   dependsOn: string[];
 }
 
+export interface UmlAttribute {
+  name: string;
+  type: string;
+  visibility: "+" | "-" | "#" | "~";
+  static: boolean;
+}
+
+export interface UmlMethod {
+  name: string;
+  parameters: string;
+  returnType: string;
+  visibility: "+" | "-" | "#" | "~";
+  static: boolean;
+  abstract: boolean;
+}
+
+export interface UmlRelationship {
+  source: string;
+  target: string;
+  type: "inheritance" | "implementation" | "composition" | "aggregation" | "association" | "dependency";
+  label: string;
+  cardinality: string;
+}
+
+export interface UmlClass {
+  name: string;
+  type: "class" | "interface" | "abstract" | "enum";
+  attributes: UmlAttribute[];
+  methods: UmlMethod[];
+  stereotypes: string[];
+  package: string;
+}
+
+export interface UmlClassDiagram {
+  title: string;
+  classes: UmlClass[];
+  relationships: UmlRelationship[];
+}
+
 export interface AnalysisResult {
   id: string;
   groups: FeatureGroup[];
@@ -46,6 +85,7 @@ export interface AnalysisResult {
   type: "diff" | "repo";
   fileTree?: string[];
   umlStructure?: UmlModule[];
+  umlClassDiagram?: UmlClassDiagram;
 }
 
 export interface RepoValidation {

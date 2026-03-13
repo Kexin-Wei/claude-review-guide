@@ -25,6 +25,7 @@ const BLOCK_PALETTE = [
 
 interface FeatureGroupCardProps {
   group: FeatureGroup;
+  index: number;
   reviewedFiles: Set<string>;
   onToggleFileReview: (groupId: string, filePath: string) => void;
   onFileClick: (filePath: string, lineStart?: number, lineEnd?: number) => void;
@@ -59,19 +60,24 @@ function getCategoryColor(category: string): string {
 
 export default function FeatureGroupCard({
   group,
+  index,
   reviewedFiles,
   onToggleFileReview,
   onFileClick,
   onGroupClick,
   showReviewCheckboxes = true,
 }: FeatureGroupCardProps) {
+  const borderColor = BLOCK_PALETTE[index % BLOCK_PALETTE.length];
   const [expanded, setExpanded] = useState(true);
   const reviewedCount = group.files.filter((f) =>
     reviewedFiles.has(`${group.id}:${f.path}`)
   ).length;
 
   return (
-    <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden">
+    <div
+      className="border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden"
+      style={{ borderLeftWidth: 3, borderLeftColor: borderColor }}
+    >
       <button
         onClick={() => {
           onGroupClick(group);

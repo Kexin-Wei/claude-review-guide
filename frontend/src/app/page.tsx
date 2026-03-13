@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useMemo } from "react";
+import { flushSync } from "react-dom";
 
 import TopBar from "@/components/TopBar";
 import TabBar from "@/components/TabBar";
@@ -9,6 +10,7 @@ import ScopeSelector from "@/components/ScopeSelector";
 import TwoColumnLayout from "@/components/TwoColumnLayout";
 import FeatureGroupCard from "@/components/FeatureGroupCard";
 import UmlDiagram from "@/components/UmlDiagram";
+import UmlClassDiagramView from "@/components/UmlClassDiagram";
 import DiffView from "@/components/DiffView";
 import AnnotationCard from "@/components/AnnotationCard";
 import RepoFileCard from "@/components/RepoFileCard";
@@ -67,6 +69,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [reviewedFiles, setReviewedFiles] = useState<Set<string>>(new Set());
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [umlDiagramMode, setUmlDiagramMode] = useState<"architecture" | "class">("architecture");
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Analysis hook
@@ -161,6 +164,15 @@ export default function Home() {
 
   const handleFileClick = useCallback(
     (filePath: string, lineStart?: number, lineEnd?: number) => {
+      // Ensure the group containing this file is selected so it renders in the right panel.
+      // Use flushSync to force React to commit the DOM update synchronously before scrolling.
+      const owningGroup = result?.groups?.find((g) =>
+        g.files.some((f) => f.path === filePath)
+      );
+      if (owningGroup) {
+        flushSync(() => setSelectedGroup(owningGroup.id));
+      }
+
       if (lineStart && contentRef.current) {
         const fileEl = contentRef.current.querySelector(`[data-file-id="${filePath}"]`);
         if (!fileEl) { scrollToFile(filePath); return; }
@@ -189,7 +201,7 @@ export default function Home() {
       }
       scrollToFile(filePath);
     },
-    [scrollToFile]
+    [scrollToFile, result]
   );
 
   const handleUmlModuleClick = useCallback(
@@ -272,10 +284,11 @@ export default function Home() {
       )}
 
       {/* Feature groups */}
-      {result?.groups?.map((group) => (
+      {result?.groups?.map((group, i) => (
         <FeatureGroupCard
           key={group.id}
           group={group}
+          index={i}
           reviewedFiles={reviewedFiles}
           onToggleFileReview={handleToggleFileReview}
           onFileClick={handleFileClick}
@@ -373,10 +386,42 @@ export default function Home() {
               {/* Architecture UML view */}
               {isArchitectureView && result?.umlStructure && result.umlStructure.length > 0 ? (
                 <div className="p-6">
-                  <UmlDiagram
-                    modules={result.umlStructure}
-                    onModuleClick={handleUmlModuleClick}
-                  />
+                  {/* Toggle between Architecture and Class Diagram */}
+                  {result?.umlClassDiagram && (
+                    <div className="flex gap-1 mb-4 p-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg w-fit">
+                      <button
+                        onClick={() => setUmlDiagramMode("architecture")}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                          umlDiagramMode === "architecture"
+                            ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                            : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        }`}
+                      >
+                        Architecture
+                      </button>
+                      <button
+                        onClick={() => setUmlDiagramMode("class")}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                          umlDiagramMode === "class"
+                            ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                            : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        }`}
+                      >
+                        Class Diagram
+                      </button>
+                    </div>
+                  )}
+                  {umlDiagramMode === "class" && result?.umlClassDiagram ? (
+                    <UmlClassDiagramView
+                      diagram={result.umlClassDiagram}
+                      onClassClick={handleUmlModuleClick}
+                    />
+                  ) : (
+                    <UmlDiagram
+                      modules={result.umlStructure}
+                      onModuleClick={handleUmlModuleClick}
+                    />
+                  )}
                 </div>
               ) : isRepoAnalysis || activeTab === "code-analysis" ? (
                 /* Code Analysis: file content + annotation per row */
