@@ -4,7 +4,7 @@ import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
 
-const DB_DIR = path.join(process.cwd(), ".data");
+const DB_DIR = path.join(process.cwd(), "..", ".data");
 const DB_PATH = path.join(DB_DIR, "code-review.db");
 
 // Ensure the data directory exists
